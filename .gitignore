@@ -4,13 +4,18 @@ dist/
 .env.*
 !.env.example
 !.env.local.example
-# 文書・マスタ・ローカル DB は git に入れない（例ファイルだけ入れる）
+# data/ 配下は原則 git に入れない。例外:
+#   data/docs/       … この MVP の文書はすべて架空のサンプルなので含める（GitHub Actions の取り込み対象）
+#   data/master/*.example.csv … マスタの例
+# 実案件では data/docs/ を除外に戻すこと
 data/*
+!data/docs/
 !data/master/
 data/master/*
 !data/master/*.example.csv
+data/quarantine/
+data/local-db/
 eval/results/
+eval/reports/
 .claude/worktrees/
 *.log
-data/quarantine/
-eval/reports/
