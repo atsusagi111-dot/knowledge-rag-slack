@@ -12,3 +12,4 @@ data/master/*
 eval/results/
 .claude/worktrees/
 *.log
+data/quarantine/

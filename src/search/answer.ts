@@ -34,6 +34,8 @@ export interface AnswerResult {
   topScore: number | null;
   latencyMs: number;
   model: string;
+  /** 監査ログの行 id（Slack 投稿後に投稿先を記録するため） */
+  logId?: number;
 }
 
 const NO_ANSWER_TOKEN = "NO_ANSWER";
@@ -91,7 +93,7 @@ export async function answerQuestion(
   result.latencyMs = Date.now() - started;
 
   if (!opts.skipLog) {
-    await writeSearchLog({
+    result.logId = await writeSearchLog({
       slackUserId,
       channelId: opts.channelId ?? null,
       question,
@@ -101,7 +103,10 @@ export async function answerQuestion(
       status: result.status,
       model,
       latencyMs: result.latencyMs,
-    }).catch((e) => console.error("監査ログ書き込み失敗:", e));
+    }).catch((e) => {
+      console.error("監査ログ書き込み失敗:", e);
+      return undefined;
+    });
   }
   return result;
 }

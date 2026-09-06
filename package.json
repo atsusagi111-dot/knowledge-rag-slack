@@ -22,7 +22,8 @@
     "eval": "tsx src/cli/eval.ts",
     "bot": "tsx src/slack/app.ts",
     "test": "vitest run",
-    "test:rls": "vitest run tests/rls.test.ts"
+    "test:rls": "vitest run tests/rls.test.ts",
+    "redact": "tsx src/cli/redact.ts"
   },
   "dependencies": {
     "@slack/bolt": "^5.1.0",

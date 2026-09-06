@@ -1,15 +1,26 @@
 /**
  * Slack イベントハンドラ。
- *  - app_mention : チャンネルで @bot 質問
- *  - message.im  : DM で質問
+ *  - app_mention : チャンネルで @bot 質問 → 回答は本人の DM へ、スレッドには案内だけ
+ *  - message.im  : DM で質問 → その場で回答
+ * 回答を投稿したら、その投稿先（channel, ts）を監査ログに記録する。
+ * 誤アップロード取り消し（npm run redact）のときに、この記録を使って投稿を削除できる。
  */
 import type { App } from "@slack/bolt";
-import { answerQuestion } from "../search/answer.js";
+import { answerQuestion, type AnswerResult } from "../search/answer.js";
+import { recordAnswerMessage } from "../audit/log.js";
 import { formatAnswer } from "./format.js";
 
+type PostResult = { channel?: string; ts?: string };
+
+async function remember(result: AnswerResult, user: string, posted: PostResult): Promise<void> {
+  if (result.logId && posted.channel && posted.ts) {
+    await recordAnswerMessage(user, result.logId, posted.channel, posted.ts).catch((e) =>
+      console.error("投稿先の記録に失敗:", e),
+    );
+  }
+}
+
 export function registerHandlers(app: App): void {
-  // チャンネルでのメンション: 回答は本人への DM に送り、スレッドには案内だけ残す。
-  // 理由: チャンネルにはその文書を見る権限が無い人もいるため、回答本文を公開の場に置かない。
   app.event("app_mention", async ({ event, say, client }) => {
     const question = stripMention(event.text);
     const user = event.user ?? "";
@@ -23,10 +34,11 @@ export function registerHandlers(app: App): void {
     const dm = await client.conversations.open({ users: user });
     const dmChannel = dm.channel?.id;
     if (dmChannel) {
-      await client.chat.postMessage({
+      const posted = await client.chat.postMessage({
         channel: dmChannel,
         ...formatAnswer(result, `<#${event.channel}> での質問「${question}」への回答`),
       });
+      await remember(result, user, posted as PostResult);
       await say({ text: `<@${user}> 回答を DM に送りました。`, thread_ts: event.ts });
     } else {
       // DM を開けない場合（設定不備など）は、本人だけに見える一時メッセージで返す
@@ -41,7 +53,8 @@ export function registerHandlers(app: App): void {
     const question = message.text?.trim();
     if (!question) return;
     const result = await answerQuestion(message.user, question, { channelId: message.channel });
-    await say(formatAnswer(result));
+    const posted = await say(formatAnswer(result));
+    await remember(result, message.user, posted as PostResult);
   });
 }
 
