@@ -33,6 +33,8 @@
     "postgres": "^3.4.9"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-pgvector": "^0.0.9",
     "@types/node": "^26.4.1",
     "docx": "^9.7.1",
     "tsx": "^4.23.13",

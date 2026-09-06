@@ -58,6 +58,7 @@ npm run db:stats                                 # 無料枠の使用量
 ```
 
 Markdown から Word を作るには: `npx tsx scripts/md-to-docx.ts <file.md | フォルダ>`
+サンプル文書の書き方は [docs/sample-docs-guide.md](docs/sample-docs-guide.md) を参照。
 
 ### 5. 検索・回答のテスト（Slack 無しで動く）
 ```
@@ -74,9 +75,11 @@ npm run eval -- --no-llm # OpenAI の生成を呼ばず、検索と閾値だけ�
 
 ### 7. テスト
 ```
-npm test           # 単体テスト + RLS テスト（.env があれば実 DB で権限漏れを検証）
-npm run test:rls   # RLS テストのみ
+npm test           # 単体テスト + ローカル RLS テスト（PGlite）+ 実 DB の RLS テスト（.env があるとき）
+npm run test:rls   # 実 DB の RLS テストのみ
 ```
+`tests/rls-local.test.ts` は PGlite（Node 内で動く PostgreSQL）に `supabase/migrations` をそのまま流し、
+Supabase 無しで「人事ユーザーは IT 文書を 0 件しか見られない」ことを検証する。
 
 ### 8. Slack ボット
 1. https://api.slack.com/apps → Create New App → From scratch

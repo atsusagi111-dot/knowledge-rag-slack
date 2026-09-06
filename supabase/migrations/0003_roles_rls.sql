@@ -5,14 +5,18 @@
 --   ・search_logs は INSERT のみ
 -- パスワードは migrate.ts が .env の RAG_BOT_PASSWORD で置換する
 -- ============================================================
+-- BYPASSRLS は既定で無効（付与には superuser が必要なので明示しない）
 do $$
 begin
   if not exists (select 1 from pg_roles where rolname = 'rag_bot') then
-    create role rag_bot login password '__RAG_BOT_PASSWORD__' nobypassrls;
+    create role rag_bot login password '__RAG_BOT_PASSWORD__';
   else
-    alter role rag_bot with login password '__RAG_BOT_PASSWORD__' nobypassrls;
+    alter role rag_bot with login password '__RAG_BOT_PASSWORD__';
   end if;
 end $$;
+
+-- vector 型・演算子は extensions スキーマにあるので、検索パスに含める
+alter role rag_bot set search_path = public, extensions;
 
 grant usage on schema public to rag_bot;
 grant usage on schema extensions to rag_bot;

@@ -14,7 +14,8 @@ const common = {
   connect_timeout: 15,
   // Supabase は TLS 必須
   ssl: "require" as const,
-  // 型変換: vector 型はテキストとして受け取る
+  // vector 型は extensions スキーマにあるので検索パスに入れる（接続時に設定）
+  connection: { search_path: "public, extensions" },
   transform: { undefined: null },
 };
 
