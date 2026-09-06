@@ -119,6 +119,9 @@ npm run bot
 ```
 チャンネルにボットを招待して `@bot 質問` するか、DM で質問する。
 
+**回答の見える範囲**: チャンネルでメンションした場合、回答本文は質問者への DM に送られ、スレッドには「DM に送りました」とだけ残る。
+チャンネルには文書を見る権限の無い人もいるため。質問文そのものはチャンネルに残るので、質問内容も見られたくない場合は DM で聞く。
+
 ### 9. 定期取り込み（任意）
 GitHub のプライベートリポジトリに push し、Settings → Secrets に `DATABASE_URL_INGEST` `DATABASE_URL_BOT` `RAG_BOT_PASSWORD` `OPENAI_API_KEY` を登録すると、
 `.github/workflows/ingest.yml` が 3 日おきに DB へアクセスし、Supabase Free の「1 週間非アクティブで一時停止」を防ぐ。

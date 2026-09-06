@@ -5,8 +5,10 @@ import type { AnswerResult } from "../search/answer.js";
 
 type Block = Record<string, unknown>;
 
-export function formatAnswer(result: AnswerResult): { text: string; blocks: Block[] } {
-  const blocks: Block[] = [{ type: "section", text: { type: "mrkdwn", text: result.text } }];
+export function formatAnswer(result: AnswerResult, heading?: string): { text: string; blocks: Block[] } {
+  const blocks: Block[] = [];
+  if (heading) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: heading }] });
+  blocks.push({ type: "section", text: { type: "mrkdwn", text: result.text } });
 
   if (result.citations.length > 0) {
     const lines = result.citations.map(
