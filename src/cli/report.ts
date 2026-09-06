@@ -28,7 +28,6 @@ interface Row {
   users: number;
   answered: number;
   no_hit: number;
-  unregistered: number;
   errors: number;
   redacted: number;
   avg_ms: number | null;
@@ -38,14 +37,13 @@ runCli(async () => {
   const { label, from, to } = monthRange(value("--month"));
   const sql = ingestSql();
 
-  const [rows, topQuestions, redactions, managers] = await Promise.all([
+  const [rows, topQuestions, redactions, managers, [unregistered]] = await Promise.all([
     sql<Row[]>`
       select d.id as department_id,
              count(l.id)::int as questions,
              count(distinct l.slack_user_id)::int as users,
              count(*) filter (where l.result_status = 'answered')::int as answered,
              count(*) filter (where l.result_status = 'no_hit')::int as no_hit,
-             count(*) filter (where l.result_status = 'unregistered')::int as unregistered,
              count(*) filter (where l.result_status = 'error')::int as errors,
              count(*) filter (where l.redacted_at is not null)::int as redacted,
              round(avg(l.latency_ms))::int as avg_ms
@@ -53,23 +51,33 @@ runCli(async () => {
       left join user_departments u on u.department_id = d.id
       left join search_logs l on l.slack_user_id = u.slack_user_id and l.created_at >= ${from} and l.created_at < ${to}
       group by d.id order by d.id`,
+    // 部署ごとに上位 5 問（全体の上位 N ではなく、部署単位で切る）
     sql<{ department_id: string; question: string; n: number }[]>`
-      select u.department_id, l.question, count(*)::int as n
-      from search_logs l join user_departments u on u.slack_user_id = l.slack_user_id
-      where l.created_at >= ${from} and l.created_at < ${to}
-      group by u.department_id, l.question order by n desc, l.question limit 100`,
+      select department_id, question, n from (
+        select u.department_id, l.question, count(*)::int as n,
+               row_number() over (partition by u.department_id order by count(*) desc, l.question) as rank
+        from search_logs l join user_departments u on u.slack_user_id = l.slack_user_id
+        where l.created_at >= ${from} and l.created_at < ${to}
+        group by u.department_id, l.question
+      ) t where rank <= 5 order by department_id, n desc`,
     sql<{ title: string; reason: string; affected_logs: number; created_at: Date }[]>`
       select title, reason, affected_logs, created_at from redactions where created_at >= ${from} and created_at < ${to} order by created_at`,
     sql<{ department_id: DepartmentId; slack_user_id: string }[]>`select department_id, slack_user_id from department_managers order by department_id`,
+    // 未登録ユーザーは user_departments に無いので部署別には集計できない。全社の 1 行として出す
+    sql<{ n: number; users: number }[]>`
+      select count(*)::int as n, count(distinct slack_user_id)::int as users from search_logs
+      where result_status = 'unregistered' and created_at >= ${from} and created_at < ${to}`,
   ]);
 
   // ---- Markdown（全体） ----
   const md = [
     `# 監査レポート ${label}`,
     "",
-    `| 部署 | 質問数 | 利用者数 | 回答 | 該当なし | 未登録 | エラー | 取り消し対象 | 平均応答 ms |`,
-    `|---|---|---|---|---|---|---|---|---|`,
-    ...rows.map((r) => `| ${departmentLabel(r.department_id)} | ${r.questions} | ${r.users} | ${r.answered} | ${r.no_hit} | ${r.unregistered} | ${r.errors} | ${r.redacted} | ${r.avg_ms ?? "-"} |`),
+    `| 部署 | 質問数 | 利用者数 | 回答 | 該当なし | エラー | 取り消し対象 | 平均応答 ms |`,
+    `|---|---|---|---|---|---|---|---|`,
+    ...rows.map((r) => `| ${departmentLabel(r.department_id)} | ${r.questions} | ${r.users} | ${r.answered} | ${r.no_hit} | ${r.errors} | ${r.redacted} | ${r.avg_ms ?? "-"} |`),
+    "",
+    `未登録ユーザーからの質問: ${unregistered.n} 件（${unregistered.users} 名）。部署マスタへの登録漏れの目安`,
     "",
     "## 取り消し（redact）の記録",
     "",
@@ -90,10 +98,11 @@ runCli(async () => {
   let sent = 0;
   for (const m of managers) {
     const r = rows.find((x) => x.department_id === m.department_id);
-    const tops = topQuestions.filter((q) => q.department_id === m.department_id).slice(0, 5);
+    const tops = topQuestions.filter((q) => q.department_id === m.department_id);
     const text = [
       `*${label} 監査レポート（${departmentLabel(m.department_id)}）*`,
-      r ? `質問 ${r.questions} 件 / 利用者 ${r.users} 名 / 回答 ${r.answered} / 該当なし ${r.no_hit} / 未登録 ${r.unregistered} / 取り消し対象 ${r.redacted} / 平均応答 ${r.avg_ms ?? "-"} ms` : "データなし",
+      r ? `質問 ${r.questions} 件 / 利用者 ${r.users} 名 / 回答 ${r.answered} / 該当なし ${r.no_hit} / 取り消し対象 ${r.redacted} / 平均応答 ${r.avg_ms ?? "-"} ms` : "データなし",
+      unregistered.n ? `未登録ユーザーからの質問: ${unregistered.n} 件（全社）` : "",
       tops.length ? `よく聞かれた質問:\n${tops.map((q) => `• ${q.question}（${q.n} 回）`).join("\n")}` : "",
       redactions.length ? `今月の取り消し: ${redactions.length} 件` : "",
       "詳細（誰が・いつ・何を）は Supabase の search_logs を参照してください。",

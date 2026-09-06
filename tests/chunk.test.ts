@@ -53,6 +53,13 @@ describe("chunkPages", () => {
     expect(chunks.length).toBeLessThan(5);
   });
 
+  it("大きな段落は重なりとして丸ごと繰り返されない（重なりは overlapTokens 以内）", () => {
+    const para = (i: number) => `段落${i}。` + "これは長い段落の文章です。".repeat(40);
+    const long = { page: 1, text: "## 章\n" + [1, 2, 3, 4].map(para).join("\n") };
+    const chunks = chunkPages([long], { maxTokens: 500, overlapTokens: 50, minTokens: 0 });
+    for (const c of chunks) expect(c.tokenCount).toBeLessThanOrEqual(500 + 60);
+  });
+
   it("長いセクションは重なり付きで分割される", () => {
     const long = { page: 1, text: "## 長い章\n" + Array.from({ length: 60 }, (_, i) => `段落${i}。これは分割テスト用の文章で、内容はダミーです。`).join("\n") };
     const chunks = chunkPages([long], { maxTokens: 200, overlapTokens: 40, minTokens: 0 });

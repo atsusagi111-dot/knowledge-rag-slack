@@ -103,10 +103,10 @@ function splitLong(text: string, maxTokens: number, overlapTokens: number): stri
   for (const u of units) {
     if (curTokens + u.tokens > maxTokens && cur.length > 0) {
       out.push(cur.map((c) => c.text).join("\n"));
-      // 重なり: 直前の末尾から overlapTokens 分を残す
+      // 重なり: 直前の末尾から overlapTokens 以内に収まる分だけ残す（大きな段落を丸ごと繰り返さない）
       const tail: typeof units = [];
       let tailTokens = 0;
-      for (let i = cur.length - 1; i >= 0 && tailTokens < overlapTokens; i--) {
+      for (let i = cur.length - 1; i >= 0 && tailTokens + cur[i].tokens <= overlapTokens; i--) {
         tail.unshift(cur[i]);
         tailTokens += cur[i].tokens;
       }

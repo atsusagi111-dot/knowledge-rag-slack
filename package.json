@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@slack/bolt": "^5.1.0",
+    "@slack/web-api": "^8.1.1",
     "dotenv": "^17.4.2",
     "js-tiktoken": "^1.0.21",
     "mammoth": "^1.12.2",

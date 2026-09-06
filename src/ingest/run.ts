@@ -74,11 +74,14 @@ export async function ingest(source: DocumentSource, opts: IngestOptions, embedd
       let chunkCount = analyzed.chunks.length;
       if (!sql) {
         // dry-run
-      } else if (prev && prev.hash === analyzed.hash && !opts.force) {
-        chunkCount = 0;
       } else {
-        await persist(sql, embedder, source.type, file, analyzed);
-        status = prev ? "updated" : "inserted";
+        if (prev && prev.hash === analyzed.hash && !opts.force) {
+          chunkCount = 0;
+        } else {
+          await persist(sql, embedder, source.type, file, analyzed);
+          status = prev ? "updated" : "inserted";
+        }
+        // 解析まで通り DB と整合した時点で失敗記録を消す（スキップでも消す。週次リトライが無限に再試行しないように）
         await sql`delete from ingest_failures where source_type = ${source.type} and source_path = ${file.path}`;
       }
       summary[status]++;

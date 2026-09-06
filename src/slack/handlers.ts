@@ -21,7 +21,8 @@ async function remember(result: AnswerResult, user: string, posted: Posted | nul
 export function registerHandlers(app: App): void {
   app.event("app_mention", async ({ event, say, client }) => {
     const question = stripMention(event.text);
-    const user = event.user ?? "";
+    const user = event.user;
+    if (!user) return; // ワークフローや他ボットからのメンション（質問者が特定できない）は扱わない
     if (!question) {
       await say({ text: "質問を続けて書いてください。例: `@bot 銀行向け DX 提案の ROI は？`", thread_ts: event.ts });
       return;
