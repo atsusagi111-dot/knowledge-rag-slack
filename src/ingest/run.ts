@@ -101,16 +101,18 @@ async function ingestOne(
   const embeddings = await embedder.embed(chunks.map((c) => c.content));
 
   await sql.begin(async (tx) => {
-    const [doc] = await tx<{ id: string }[]>`
+    // department_locked（管理者が手で部署を変えた文書）は、取り込みで部署を上書きしない
+    const [doc] = await tx<{ id: string; department_id: string }[]>`
       insert into documents (source_type, source_path, content_hash, title, department_id, doc_type,
                              client_name, created_year, file_type, page_count)
       values (${source.type}, ${file.path}, ${hash}, ${meta.title}, ${meta.departmentId!}, ${meta.docType},
               ${meta.clientName}, ${meta.createdYear}, ${file.fileType}, ${extracted.pages.length})
       on conflict (source_type, source_path) do update set
-        content_hash = excluded.content_hash, title = excluded.title, department_id = excluded.department_id,
+        content_hash = excluded.content_hash, title = excluded.title,
+        department_id = case when documents.department_locked then documents.department_id else excluded.department_id end,
         doc_type = excluded.doc_type, client_name = excluded.client_name, created_year = excluded.created_year,
         file_type = excluded.file_type, page_count = excluded.page_count, ingested_at = now()
-      returning id`;
+      returning id, department_id`;
     // 古いチャンクを消して入れ直す（差し替えはほぼ無い前提なので単純に）
     await tx`delete from chunks where document_id = ${doc.id}`;
     for (let i = 0; i < chunks.length; i++) {
@@ -118,7 +120,7 @@ async function ingestOne(
       await tx`
         insert into chunks (document_id, department_id, chunk_index, section_title, page_start, page_end,
                             content, token_count, embedding)
-        values (${doc.id}, ${meta.departmentId!}, ${c.index}, ${c.sectionTitle}, ${c.pageStart}, ${c.pageEnd},
+        values (${doc.id}, ${doc.department_id}, ${c.index}, ${c.sectionTitle}, ${c.pageStart}, ${c.pageEnd},
                 ${c.content}, ${c.tokenCount}, ${toVectorLiteral(embeddings[i])}::vector)`;
     }
   });

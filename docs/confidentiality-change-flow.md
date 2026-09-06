@@ -1,4 +1,19 @@
-# 機密扱い変更時の対応フロー
+# 機密文書の取り扱いガバナンス（機密扱い変更時の対応フロー）
+
+## 要約: ナレッジ担当者向けの 3 つの操作
+
+この MVP には専用の管理画面が無い。**管理画面 = Supabase の Table Editor**、**操作 = コマンド 1 つ**で同じことができる。
+
+| やりたいこと | 操作 | 効果 |
+|---|---|---|
+| ① 機密扱いに変更（見られる部署を限定） | Table Editor → `documents` → 該当行の `department_id` を `confidential` に書き換え保存。またはコマンド `npm run doc:classify -- --path <部署/ファイル名> --department confidential` | DB のトリガーがチャンクにも反映。その瞬間から `confidential` を付与された人（`user_departments.csv`）以外は検索に出ない。`department_locked` が立ち、次回の取り込みで元の部署に戻らない |
+| ② 完全に削除（ハード削除 + 元ファイル + 監査ログの redact） | `npm run redact -- --path <部署/ファイル名> --reason "理由" --delete-slack` | `documents` と `chunks` を DELETE、元ファイルを `data/quarantine/` へ隔離（SharePoint 版は Phase 2 で API 削除）、その文書を根拠にした `search_logs` から該当チャンクを redact、Slack に投稿済みの回答を削除、`redactions` に記録 |
+| ③ 監査ログの確認と月次レポート | Table Editor → `search_logs`（誰が・いつ・何を・結果・根拠チャンク）。月次は `npm run report`、GitHub Actions `monthly-report` が毎月 1 日に自動実行し、`department_managers.csv` の部署管理者に Slack DM | 集計は質問者の所属部署ごと（複数部署所属の人は各部署に数える）。レポート本文は `eval/reports/YYYY-MM.md` と Actions の成果物にも保存 |
+
+①の補足: 「機密」は 7 番目の部署として実装している。機密文書を見てよい人には `user_departments.csv` に `confidential` の行を足して `npm run db:seed-users`。元の区分に戻すには Table Editor で `department_id` を戻す（ロックは残るので、取り込み元の判定に戻したいときは `npm run doc:classify -- --path ... --unlock` 後に `npm run ingest -- --force`）。
+
+---
+
 
 「機密扱いの変更」は次の 3 パターンに分けて扱う。どのパターンも、**元データ（フォルダとマスタ CSV）を正として、コマンド 1 つで DB を同期する**のが原則。
 DB を直接編集しない（次回の取り込みで元に戻ってしまうため）。

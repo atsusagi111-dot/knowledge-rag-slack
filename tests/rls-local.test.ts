@@ -60,9 +60,9 @@ const SEARCH = `
   order by c.embedding <=> $1::vector limit 10`;
 
 describe("RLS（ローカル PGlite）", () => {
-  it("マイグレーションが通り、部署が 6 件入る", async () => {
+  it("マイグレーションが通り、部署が 7 件入る（6 部署 + 機密）", async () => {
     const r = await db.query<{ n: number }>("select count(*)::int as n from departments");
-    expect(r.rows[0].n).toBe(6);
+    expect(r.rows[0].n).toBe(7);
   });
 
   it("人事ユーザーは IT 部の文書を 0 件しか見られない", async () => {
@@ -96,6 +96,20 @@ describe("RLS（ローカル PGlite）", () => {
   it("bot ロールは chunks を消せない・書けない", async () => {
     await expect(asBot("UIT", "delete from chunks")).rejects.toThrow(/permission denied/i);
     await expect(asBot("UIT", "insert into user_departments values ('UIT','hr')")).rejects.toThrow(/permission denied/i);
+  });
+
+  it("文書の部署を手で変えると chunks にも反映され、機密は権限者だけが見える（トリガー）", async () => {
+    // IT 文書を「機密」に変更 → IT ユーザーには見えなくなり、confidential を持つ人だけ見える
+    await db.exec(`update documents set department_id = 'confidential' where id = '00000000-0000-0000-0000-000000000001'`);
+    const doc = await db.query<{ department_locked: boolean }>(`select department_locked from documents where id = '00000000-0000-0000-0000-000000000001'`);
+    expect(doc.rows[0].department_locked).toBe(true);
+    const ch = await db.query<{ n: number }>(`select count(*)::int as n from chunks where document_id = '00000000-0000-0000-0000-000000000001' and department_id = 'confidential'`);
+    expect(ch.rows[0].n).toBe(2);
+    expect((await asBot<{ department_id: string }>("UIT", SEARCH, [vec(0.01)])).length).toBe(0);
+    await db.exec(`insert into user_departments (slack_user_id, department_id) values ('USEC', 'confidential')`);
+    expect((await asBot<{ department_id: string }>("USEC", SEARCH, [vec(0.01)])).map((r) => r.department_id)).toEqual(["confidential", "confidential"]);
+    // 元に戻す
+    await db.exec(`update documents set department_id = 'it' where id = '00000000-0000-0000-0000-000000000001'`);
   });
 
   it("監査ログは自分名義だけ書ける", async () => {

@@ -131,6 +131,7 @@ npm run bot
 GitHub のプライベートリポジトリに push し、Settings → Secrets に `DATABASE_URL_INGEST` `DATABASE_URL_BOT` `RAG_BOT_PASSWORD` `OPENAI_API_KEY` を登録すると、
 `.github/workflows/ingest.yml` が 3 日おきに DB へアクセスし、Supabase Free の「1 週間非アクティブで一時停止」を防ぐ。
 リポジトリに 60 日間コミットが無いと schedule は止まるので、月 1 回は手動 Run かコミットをする。
+`monthly-report.yml` は毎月 1 日に先月分の監査レポートを部署管理者へ Slack DM する（Secrets に `SLACK_BOT_TOKEN` も登録、送付先は `data/master/department_managers.csv` → `npm run db:seed-managers`）。
 
 ## 設定値（.env）
 | 変数 | 既定 | 意味 |

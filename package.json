@@ -23,7 +23,10 @@
     "bot": "tsx src/slack/app.ts",
     "test": "vitest run",
     "test:rls": "vitest run tests/rls.test.ts",
-    "redact": "tsx src/cli/redact.ts"
+    "redact": "tsx src/cli/redact.ts",
+    "doc:classify": "tsx src/cli/classify.ts",
+    "report": "tsx src/cli/report.ts",
+    "db:seed-managers": "tsx src/cli/seed-managers.ts"
   },
   "dependencies": {
     "@slack/bolt": "^5.1.0",

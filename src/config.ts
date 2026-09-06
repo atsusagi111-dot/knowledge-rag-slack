@@ -19,7 +19,7 @@ function optional(name: string, fallback: string): string {
 }
 
 /** 部署 ID（DB の departments.id と一致させる） */
-export const DEPARTMENT_IDS = ["strategy", "operations", "it", "hr", "sales", "admin"] as const;
+export const DEPARTMENT_IDS = ["strategy", "operations", "it", "hr", "sales", "admin", "confidential"] as const;
 export type DepartmentId = (typeof DEPARTMENT_IDS)[number];
 
 /** 日本語名 ↔ 部署 ID の対応 */
@@ -30,6 +30,8 @@ export const DEPARTMENT_NAME_JA: Record<DepartmentId, string> = {
   hr: "人事",
   sales: "営業",
   admin: "管理",
+  /** 機密区分。この部署を付与された人だけが閲覧できる */
+  confidential: "機密",
 };
 
 export const config = {

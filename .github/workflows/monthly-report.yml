@@ -1,0 +1,36 @@
+# 月次監査レポート: 毎月 1 日 09:00 JST に先月分を集計し、部署管理者へ Slack DM で送る
+name: monthly-report
+
+on:
+  schedule:
+    - cron: "0 0 1 * *"
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "対象月（YYYY-MM。空なら先月）"
+        required: false
+        default: ""
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL_INGEST: ${{ secrets.DATABASE_URL_INGEST }}
+      DATABASE_URL_BOT: ${{ secrets.DATABASE_URL_BOT }}
+      RAG_BOT_PASSWORD: ${{ secrets.RAG_BOT_PASSWORD }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_APP_TOKEN: unused
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run report -- ${{ inputs.month != '' && format('--month {0}', inputs.month) || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audit-report
+          path: eval/reports/*.md
