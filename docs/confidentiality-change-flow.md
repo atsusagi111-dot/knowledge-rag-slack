@@ -92,11 +92,13 @@ npm run redact -- --path it/case7-doc3-it-cloud-migration.pdf --reason "機密�
 | **誤アップロードの取り消し** | 何も直さず | `npm run redact -- --path <パス> --reason "理由" --delete-slack` | 即時 |
 | 文書の部署変更 | 冒頭行 or フォルダ | `npm run ingest -- --prune` | 即時 |
 | 文書の除外・退役 | ファイル削除 | `npm run ingest -- --prune` | 即時 |
+| 取り込み失敗の再試行 | 原因を直す | `npm run ingest -- --retry-failed`（週次 Actions が自動実行） | 即時 |
 | 人の異動・退職 | マスタ CSV | `npm run db:seed-users -- --sync` | 即時 |
 | 部署の新設 | `supabase/migrations` に seed 追加 + `config.ts` の `DEPARTMENT_IDS` | `npm run db:migrate` | 要デプロイ |
 
 ## 設計上の注意
 
 - `--prune` と `--sync` は「元に無いものを消す」動作なので、取り込み元フォルダや CSV が壊れている（空になっている）状態で実行すると全削除になる。実行前に `npm run ingest -- --dry-run` で件数を確認する
-- GitHub Actions の定期実行は `--prune` を付けていない（意図しない削除を避けるため）。機密変更は人が手動で `--prune` を実行する運用
+- GitHub Actions の定期実行（毎日）は `--prune` を付けていない（意図しない削除を避けるため）。機密変更は人が手動で `--prune` を実行する運用
+- 取り込みに失敗したファイルは `ingest_failures` に記録され、毎週月曜の Actions が再試行する。原因（画像 PDF、部署行なし）を直せば次回で解消
 - Phase 2（SharePoint 連携）では、SharePoint 側の権限（サイト / ライブラリ）を `departmentHint` に写像し、同じ `--prune` で同期する

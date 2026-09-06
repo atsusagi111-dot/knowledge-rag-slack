@@ -1,0 +1,28 @@
+# 週次リトライ（毎週月曜 02:30 JST = 日曜 17:30 UTC）
+# ingest_failures に記録された「前回失敗したファイル」だけを再試行する
+name: weekly-retry
+
+on:
+  schedule:
+    - cron: "30 17 * * 0"
+  workflow_dispatch:
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL_INGEST: ${{ secrets.DATABASE_URL_INGEST }}
+      DATABASE_URL_BOT: ${{ secrets.DATABASE_URL_BOT }}
+      RAG_BOT_PASSWORD: ${{ secrets.RAG_BOT_PASSWORD }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DOCS_DIR: ./data/docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: retry failed files
+        run: npm run ingest -- --retry-failed

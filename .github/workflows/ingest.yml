@@ -1,13 +1,13 @@
-# 定期取り込み + Supabase 一時停止対策（無料枠: プライベートリポで月 2,000 分）
-# - 3 日おきに documents を取り込み（DB に触るので「非アクティブ 1 週間」の停止を防ぐ）
-# - 取り込み対象はリポジトリ内の data/docs は .gitignore なので、
-#   Actions 用にはサンプル文書を別ブランチ or Secrets 経由で置くか、db:stats のみ実行する
+# 日次取り込み（毎日 02:00 JST = 17:00 UTC）
+# - data/docs/ 配下の新規・変更ファイルを取り込む（既存は差分判定でスキップ）
+# - DB に触るので Supabase Free の「1 週間非アクティブで一時停止」も防げる
+# - --prune は付けない（意図しない削除を避ける。機密変更は人が手動で実行）
 # - 注意: リポジトリに 60 日間コミットが無いと schedule は自動停止する
 name: ingest
 
 on:
   schedule:
-    - cron: "0 0 */3 * *" # 3 日おき 09:00 JST
+    - cron: "0 17 * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -32,8 +32,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: keep-alive & stats（DB に触って一時停止を防ぐ）
+      - name: keep-alive & stats
         run: npm run db:stats
-      - name: ingest（data/docs があるときだけ）
-        if: hashFiles('data/docs/**') != ''
+      - name: ingest
         run: npm run ingest -- ${{ inputs.force && '--force' || '' }}

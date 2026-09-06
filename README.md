@@ -12,6 +12,19 @@ Slack で質問すると、社内文書（PDF / Word）から関連箇所を探�
 Slack(Socket Mode) → 質問を Embedding → RLS 付きベクトル検索 → 閾値判定 → OpenAI で出典付き要約 → 返信 + 監査ログ
 ```
 
+## 納品物チェックリストの確認結果（2026-09-06、すべて手動で確認）
+
+| # | 項目 | 結果 | 確認方法 |
+|---|---|---|---|
+| ① | 取り込み完了 + 失敗ゼロ | 合格（37 件、失敗 0） | Slack で 15 問、`npm run ingest` の結果行、`npm run db:stats`。5,000 件は Phase 2（差分取り込みの設計は同じ） |
+| ② | Cron で新規追加が自動取り込み | 合格 | GitHub Actions `ingest` のログに `inserted sales/sales-07-sports-ec.docx`、直後に Slack で回答 |
+| ③ | 15 問テストで 80% 以上 | 合格（Recall@5 1.00、該当なし 3/3） | `npm run eval` → [docs/eval-latest.md](docs/eval-latest.md) |
+| ④ | 全回答にファイル名 + ページ番号 | 合格 | 出典が `文書名 ファイル名 p.N（部署 / 見出し）類似度` の形式 |
+| ⑤ | 3 秒以内 ACK + 10 秒以内に回答 | 合格（受付リアクション即時、回答 3〜7 秒） | Bolt はイベント受信直後に ack、質問に虫めがねを付けてから処理、回答末尾に ms 表示 |
+| ⑥ | 他部署文書が検索結果に出ない | 合格 | 人事のみアカウントで IT 文書の質問が該当なし。RLS テスト 17 件（PGlite + 実 DB） |
+| ⑦ | 誰がいつ何を質問したか追跡可能 | 合格 | Supabase `search_logs`。月次で部署管理者へ Slack DM |
+| ⑧ | 機密扱い変更時の対応フロー | 合格 | 機密化で本人でも該当なし、`npm run redact` で Slack 回答削除 + ログ redact + 隔離 → [docs/governance-for-client.md](docs/governance-for-client.md) |
+
 ## 必要なもの
 
 | サービス | プラン | 用途 |
@@ -82,8 +95,19 @@ npm run extract -- data/docs/strategy/xxx.pdf   # テキスト抽出とメタデ
 npm run chunk   -- data/docs/strategy/xxx.pdf   # チャンク分割の確認
 npm run ingest  -- --dry-run                     # DB・OpenAI を使わずに件数確認
 npm run ingest                                   # 本番取り込み（未変更ファイルはスキップ）
+npm run ingest  -- --prune                       # フォルダから消えた文書を DB からも削除
+npm run ingest  -- --retry-failed                # 前回失敗したファイルだけ再試行
 npm run db:stats                                 # 無料枠の使用量
 ```
+
+### 4b. 機密文書の運用（ガバナンス）
+```
+npm run doc:classify -- --path it/xxx.pdf --department confidential   # 機密扱いに変更（Table Editor で department_id を変えても同じ）
+npm run redact       -- --path it/xxx.pdf --reason "理由" --delete-slack  # 誤アップロードの取り消し（文書削除 + ログ redact + Slack 回答削除 + 隔離）
+npm run report       -- --month 2026-09                                 # 月次監査レポートを部署管理者へ Slack DM
+npm run db:seed-managers                                                # 部署管理者マスタ（data/master/department_managers.csv）
+```
+手順書: [docs/governance-for-client.md](docs/governance-for-client.md)（担当者向け）、[docs/confidentiality-change-flow.md](docs/confidentiality-change-flow.md)（技術詳細）
 
 Markdown から Word を作るには: `npx tsx scripts/md-to-docx.ts <file.md | フォルダ>`
 サンプル文書の書き方は [docs/sample-docs-guide.md](docs/sample-docs-guide.md) を参照。
@@ -127,11 +151,17 @@ npm run bot
 **回答の見える範囲**: チャンネルでメンションした場合、回答本文は質問者への DM に送られ、スレッドには「DM に送りました」とだけ残る。
 チャンネルには文書を見る権限の無い人もいるため。質問文そのものはチャンネルに残るので、質問内容も見られたくない場合は DM で聞く。
 
-### 9. 定期取り込み（任意）
-GitHub のプライベートリポジトリに push し、Settings → Secrets に `DATABASE_URL_INGEST` `DATABASE_URL_BOT` `RAG_BOT_PASSWORD` `OPENAI_API_KEY` を登録すると、
-`.github/workflows/ingest.yml` が 3 日おきに DB へアクセスし、Supabase Free の「1 週間非アクティブで一時停止」を防ぐ。
+### 9. 運用 Cron（GitHub Actions）
+Settings → Secrets に `DATABASE_URL_INGEST` `DATABASE_URL_BOT` `RAG_BOT_PASSWORD` `OPENAI_API_KEY` `SLACK_BOT_TOKEN` を登録する。
+
+| 頻度 | ワークフロー | 処理 |
+|---|---|---|
+| 毎日 02:00 JST | `ingest.yml` | `data/docs/` の差分取り込み。Supabase Free の「1 週間非アクティブで一時停止」も防ぐ |
+| 毎週月曜 02:30 JST | `weekly-retry.yml` | `ingest_failures` に記録された失敗ファイルだけ再試行 |
+| 毎月 1 日 09:00 JST | `monthly-report.yml` | 先月分の監査レポートを部署管理者へ Slack DM（送付先は `data/master/department_managers.csv` → `npm run db:seed-managers`） |
+
 リポジトリに 60 日間コミットが無いと schedule は止まるので、月 1 回は手動 Run かコミットをする。
-`monthly-report.yml` は毎月 1 日に先月分の監査レポートを部署管理者へ Slack DM する（Secrets に `SLACK_BOT_TOKEN` も登録、送付先は `data/master/department_managers.csv` → `npm run db:seed-managers`）。
+この MVP では文書がすべて架空のため `data/docs/` を git に含めて Actions が読めるようにしている。実案件では `.gitignore` で除外に戻し、SharePoint 連携（Phase 2）に置き換える。
 
 ## 設定値（.env）
 | 変数 | 既定 | 意味 |
@@ -144,6 +174,14 @@ GitHub のプライベートリポジトリに push し、Settings → Secrets �
 | `EMBEDDING_PROVIDER` | openai | `fake` にすると OpenAI を呼ばない簡易ベクトル（ローカル確認用） |
 | `LLM_PROVIDER` | openai | `fake` にすると 1 位チャンクを引用する模擬応答 |
 | `DB_BOT_SET_ROLE` | (空) | ローカル PGlite 用。`rag_bot` を指定すると検索トランザクション内で SET ROLE する |
+
+## 計画からの主な変更点（実装して分かったこと）
+- 生成モデル: gpt-5-nano → **gpt-5-mini**。nano は「該当する文書が無い」場面で別案件の数値を流用することがあり、mini は安定して該当なしを返した（1 問 0.3 円程度）
+- 推論量 `reasoning_effort=low`: 既定のままだと 11 秒、low で 3〜7 秒。minimal は最速だが判定が不安定
+- チャンクの先頭に「文書タイトル > 見出し」を付与、上位 8 件: 客先名入りの質問で数値だけのセクションが拾えなかった問題への対策
+- 箇条書きの「●」を見出し扱いしない: Word → PDF 変換で細切れになっていた
+- 機密区分（7 番目の部署）、部署変更トリガー、取り消しコマンド、月次レポート、失敗リトライを追加
+- チャンネルでの質問は回答を DM に送る（チャンネルの他メンバーに見せない）
 
 ## セキュリティ設計の要点
 - ボットは `rag_bot` ロール（SELECT のみ・`BYPASSRLS` なし）で接続し、検索のたびにトランザクション内で Slack ユーザー ID を `set_config` する

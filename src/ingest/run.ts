@@ -20,6 +20,8 @@ export interface IngestOptions {
   dryRun?: boolean;
   /** 取り込み元に存在しなくなった文書を DB から削除する（機密扱い変更・退役時の同期） */
   prune?: boolean;
+  /** ingest_failures に記録されたファイルだけを再試行する（週次リトライ用） */
+  retryFailed?: boolean;
 }
 
 export interface IngestSummary {
@@ -40,21 +42,42 @@ export async function ingest(
   const summary: IngestSummary = { inserted: 0, updated: 0, skipped: 0, failed: 0, chunks: 0, pruned: 0 };
   const sql = opts.dryRun ? null : ingestSql();
 
+  // --retry-failed: 前回失敗したファイルだけを対象にする
+  let onlyPaths: Set<string> | null = null;
+  if (opts.retryFailed && sql) {
+    const failed = await sql<{ source_path: string }[]>`select source_path from ingest_failures where source_type = ${source.type}`;
+    onlyPaths = new Set(failed.map((f) => f.source_path));
+    console.log(`再試行対象: ${onlyPaths.size} 件`);
+    if (onlyPaths.size === 0) return summary;
+  }
+
   const seen = new Set<string>();
   for await (const file of source.list()) {
     seen.add(file.path);
+    if (onlyPaths && !onlyPaths.has(file.path)) continue;
     try {
       const result = await ingestOne(source, file, opts, embedder, sql);
       summary[result.status]++;
       summary.chunks += result.chunks;
       console.log(`${result.status.padEnd(8)} ${file.path}  (${result.department ?? "部署不明"}, ${result.chunks} chunks)`);
+      if (sql && result.status !== "skipped") {
+        await sql`delete from ingest_failures where source_type = ${source.type} and source_path = ${file.path}`;
+      }
     } catch (e) {
       summary.failed++;
-      console.error(`failed   ${file.path}: ${(e as Error).message}`);
+      const message = (e as Error).message;
+      console.error(`failed   ${file.path}: ${message}`);
+      if (sql) {
+        await sql`
+          insert into ingest_failures (source_type, source_path, error)
+          values (${source.type}, ${file.path}, ${message})
+          on conflict (source_type, source_path) do update
+            set error = excluded.error, attempts = ingest_failures.attempts + 1, last_at = now()`;
+      }
     }
   }
 
-  if (opts.prune && sql) {
+  if (opts.prune && sql && !onlyPaths) {
     // 取り込み元から消えた文書を DB からも削除する（chunks は on delete cascade で一緒に消える）。
     // 機密扱いの変更（他部署に見せない・退役）は「元ファイルを消す/移す → --prune」で DB に反映される
     const existing = await sql<{ id: string; source_path: string; department_id: string }[]>`
@@ -134,9 +157,11 @@ export async function runIngestCli(argv: string[]): Promise<void> {
     force: argv.includes("--force"),
     dryRun: argv.includes("--dry-run"),
     prune: argv.includes("--prune"),
+    retryFailed: argv.includes("--retry-failed"),
   };
   const dir = argv.find((a) => !a.startsWith("--")) ?? config.docsDir;
-  console.log(`取り込み元: ${path.resolve(dir)}  ${opts.dryRun ? "(dry-run)" : ""}${opts.force ? "(force)" : ""}${opts.prune ? "(prune)" : ""}`);
+  const flags = (["dryRun", "force", "prune", "retryFailed"] as const).filter((k) => opts[k]).join(", ");
+  console.log(`取り込み元: ${path.resolve(dir)}${flags ? `  (${flags})` : ""}`);
   try {
     const s = await ingest(new LocalFolderSource(dir), opts);
     console.log(`\n結果: 新規 ${s.inserted} / 更新 ${s.updated} / スキップ ${s.skipped} / 失敗 ${s.failed} / 削除 ${s.pruned} / チャンク ${s.chunks}`);
