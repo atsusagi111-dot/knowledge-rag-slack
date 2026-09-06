@@ -13,7 +13,7 @@ async function main() {
   console.log(r.text);
   if (r.citations.length > 0) {
     console.log("\n出典:");
-    for (const c of r.citations) console.log(`  [${c.n}] ${c.title}（${c.department} / ${c.page}${c.sectionTitle ? ` / ${c.sectionTitle}` : ""}） ${c.score.toFixed(2)}`);
+    for (const c of r.citations) console.log(`  [${c.n}] ${c.title}  ${c.fileName} ${c.page}（${c.department}${c.sectionTitle ? ` / ${c.sectionTitle}` : ""}） ${c.score.toFixed(2)}`);
   }
 }
 

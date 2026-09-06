@@ -6,6 +6,7 @@ const hit = (score: number): SearchHit => ({
   chunkId: `c${score}`,
   documentId: "d",
   title: "t",
+  fileName: "t.pdf",
   departmentId: "it",
   createdYear: 2024,
   sectionTitle: null,

@@ -137,6 +137,7 @@ GitHub のプライベートリポジトリに push し、Settings → Secrets �
 |---|---|---|
 | `CHAT_MODEL` | gpt-5-nano | 要約に使うモデル。品質不足なら gpt-5-mini |
 | `EMBEDDING_MODEL` | text-embedding-3-small | 次元数 1536（DB と一致させる） |
+| `CHAT_REASONING_EFFORT` | low | gpt-5 系の推論量。minimal は最速だが不安定、medium 以上は 10 秒超 |
 | `SEARCH_TOP_K` | 8 | 回答に使う上位チャンク数 |
 | `SIMILARITY_THRESHOLD` | 0.40 | これ未満は「該当なし」。`npm run eval` の「閾値の目安」で校正 |
 | `EMBEDDING_PROVIDER` | openai | `fake` にすると OpenAI を呼ばない簡易ベクトル（ローカル確認用） |

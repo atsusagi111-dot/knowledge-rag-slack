@@ -52,7 +52,7 @@ describe("slack", () => {
   });
   it("回答を Block Kit に整形し、出典を並べる", () => {
     const hits = [
-      { chunkId: "c1", documentId: "d1", title: "銀行A向け DX 提案書", departmentId: "strategy" as const, createdYear: 2024, sectionTitle: "4. ROI 試算", pageStart: 2, pageEnd: 2, content: "x", score: 0.61 },
+      { chunkId: "c1", documentId: "d1", title: "銀行A向け DX 提案書", fileName: "case7-doc1-strategy-dx-bank.pdf", departmentId: "strategy" as const, createdYear: 2024, sectionTitle: "4. ROI 試算", pageStart: 2, pageEnd: 2, content: "x", score: 0.61 },
     ];
     const citations = buildCitations(hits);
     expect(citations[0]).toMatchObject({ n: 1, department: "戦略", page: "p.2" });

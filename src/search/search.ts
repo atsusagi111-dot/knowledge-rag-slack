@@ -10,6 +10,8 @@ export interface SearchHit {
   chunkId: string;
   documentId: string;
   title: string;
+  /** 取り込み元のファイル名（出典表示用） */
+  fileName: string;
   departmentId: DepartmentId;
   createdYear: number | null;
   sectionTitle: string | null;
@@ -70,6 +72,7 @@ export async function searchByVector(slackUserId: string, queryVec: number[], to
         chunk_id: string;
         document_id: string;
         title: string;
+        source_path: string;
         department_id: DepartmentId;
         created_year: number | null;
         section_title: string | null;
@@ -79,7 +82,7 @@ export async function searchByVector(slackUserId: string, queryVec: number[], to
         score: number;
       }[]
     >`
-      select c.id as chunk_id, c.document_id, d.title, d.department_id, d.created_year,
+      select c.id as chunk_id, c.document_id, d.title, d.source_path, d.department_id, d.created_year,
              c.section_title, c.page_start, c.page_end, c.content,
              1 - (c.embedding <=> ${literal}::vector) as score
       from chunks c
@@ -90,6 +93,7 @@ export async function searchByVector(slackUserId: string, queryVec: number[], to
       chunkId: r.chunk_id,
       documentId: r.document_id,
       title: r.title,
+      fileName: r.source_path.split("/").pop() ?? r.source_path,
       departmentId: r.department_id,
       createdYear: r.created_year,
       sectionTitle: r.section_title,

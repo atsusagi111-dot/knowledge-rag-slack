@@ -18,6 +18,7 @@ export type AnswerStatus = "answered" | "no_hit" | "unregistered" | "error";
 export interface Citation {
   n: number;
   title: string;
+  fileName: string;
   department: string;
   sectionTitle: string | null;
   page: string;
@@ -115,6 +116,7 @@ export function buildCitations(hits: SearchHit[]): Citation[] {
   return hits.map((h, i) => ({
     n: i + 1,
     title: h.title,
+    fileName: h.fileName,
     department: DEPARTMENT_NAME_JA[h.departmentId] ?? h.departmentId,
     sectionTitle: h.sectionTitle,
     page: h.pageStart == null ? "-" : h.pageStart === h.pageEnd || h.pageEnd == null ? `p.${h.pageStart}` : `p.${h.pageStart}-${h.pageEnd}`,
@@ -137,6 +139,8 @@ export type ChatFn = (system: string, user: string) => Promise<string>;
 const openaiChat: ChatFn = async (system, user) => {
   const res = await openai().chat.completions.create({
     model: config.openai.chatModel,
+    // gpt-5 系は既定で「考える」時間を使い 8〜12 秒かかる。要約なら最小で十分（10 秒以内の応答要件）
+    ...(config.openai.reasoningEffort ? { reasoning_effort: config.openai.reasoningEffort as "minimal" | "low" | "medium" | "high" } : {}),
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
@@ -164,7 +168,7 @@ async function generate(question: string, hits: SearchHit[], citations: Citation
   const context = hits
     .map((h, i) => {
       const c = citations[i];
-      return `[${c.n}] 文書: ${c.title}（${c.department} / ${c.page}${c.sectionTitle ? ` / ${c.sectionTitle}` : ""}）\n${h.content}`;
+      return `[${c.n}] 文書: ${c.title}（${c.fileName} / ${c.department} / ${c.page}${c.sectionTitle ? ` / ${c.sectionTitle}` : ""}）\n${h.content}`;
     })
     .join("\n\n---\n\n");
 

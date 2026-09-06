@@ -59,6 +59,8 @@ export const config = {
     /** text-embedding-3-small の次元数。DB の vector(1536) と一致させる */
     embeddingDimensions: 1536,
     chatModel: optional("CHAT_MODEL", "gpt-5-nano"),
+    /** gpt-5 系の推論量。minimal は最速だが稀に該当なし誤判定、low は 2〜5 秒で安定（既定）。空文字で API 既定 */
+    reasoningEffort: optional("CHAT_REASONING_EFFORT", "low"),
   },
   search: {
     /** 回答に渡す上位チャンク数。36 件 183 チャンクで 5 だと同一文書の別セクションが漏れたため 8 */

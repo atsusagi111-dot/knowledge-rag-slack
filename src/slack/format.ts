@@ -12,7 +12,7 @@ export function formatAnswer(result: AnswerResult, heading?: string): { text: st
 
   if (result.citations.length > 0) {
     const lines = result.citations.map(
-      (c) => `*[${c.n}]* ${c.title}（${c.department} / ${c.page}${c.sectionTitle ? ` / ${c.sectionTitle}` : ""}）  類似度 ${c.score.toFixed(2)}`,
+      (c) => `*[${c.n}]* ${c.title}  \`${c.fileName}\` ${c.page}（${c.department}${c.sectionTitle ? ` / ${c.sectionTitle}` : ""}）  類似度 ${c.score.toFixed(2)}`,
     );
     blocks.push({ type: "divider" });
     blocks.push({ type: "section", text: { type: "mrkdwn", text: `*出典*\n${lines.join("\n")}` } });

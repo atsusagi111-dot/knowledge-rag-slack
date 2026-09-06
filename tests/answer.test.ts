@@ -14,6 +14,7 @@ const hit = (score: number, title = "銀行A向け DX 提案書"): SearchHit => 
   chunkId: `c${score}`,
   documentId: "d1",
   title,
+  fileName: "case7-doc1-strategy-dx-bank.pdf",
   departmentId: "strategy",
   createdYear: 2024,
   sectionTitle: "4. ROI 試算",

@@ -46,12 +46,14 @@ export function registerHandlers(app: App): void {
     }
   });
 
-  app.message(async ({ message, say }) => {
+  app.message(async ({ message, say, client }) => {
     // DM の通常メッセージだけ扱う（ボット自身・編集・スレッド返信通知などは無視）
     if (message.channel_type !== "im") return;
     if (!("text" in message) || !("user" in message) || !message.user || message.subtype) return;
     const question = message.text?.trim();
     if (!question) return;
+    // 受付の印（3 秒以内に「受け取った」ことを目に見える形で返す）
+    await client.reactions.add({ channel: message.channel, timestamp: message.ts, name: "mag" }).catch(() => {});
     const result = await answerQuestion(message.user, question, { channelId: message.channel });
     const posted = await say(formatAnswer(result));
     await remember(result, message.user, posted as PostResult);
