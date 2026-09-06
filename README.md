@@ -158,3 +158,11 @@ supabase/migrations/ テーブル・ロール・RLS ポリシー
 eval/                テスト質問 15 問と結果
 tests/               単体テスト + RLS 権限テスト
 ```
+
+## サンプル文書の再生成
+`samples/<部署>/*.md` が 36 件の元原稿（架空のコンサル案件）。次で PDF / Word を作れる（Word がインストールされた Windows）。
+```
+npx tsx scripts/md-to-docx.ts samples/strategy          # md → docx（部署ごとに実行）
+powershell -ExecutionPolicy Bypass -File scripts/docx-to-pdf.ps1 samples/strategy -DeleteSource   # docx → pdf
+```
+できたファイルを `data/docs/<部署>/` に置いて `npm run ingest`。最新の評価結果は [docs/eval-latest.md](docs/eval-latest.md)。
