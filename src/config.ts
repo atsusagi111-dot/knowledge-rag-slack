@@ -45,7 +45,12 @@ export const config = {
     get ragBotPassword() {
       return required("RAG_BOT_PASSWORD");
     },
+    /** ローカル PGlite 用: bot 接続の中で SET ROLE するロール名（Supabase では空のまま） */
+    botSetRole: optional("DB_BOT_SET_ROLE", ""),
   },
+  /** 'openai' | 'fake'（fake は OpenAI を呼ばないローカル動作確認用） */
+  embeddingProvider: optional("EMBEDDING_PROVIDER", "openai"),
+  llmProvider: optional("LLM_PROVIDER", "openai"),
   openai: {
     get apiKey() {
       return required("OPENAI_API_KEY");

@@ -19,6 +19,31 @@ Slack(Socket Mode) → 質問を Embedding → RLS 付きベクトル検索 → 
 | Slack | Free | ボットの入口（Socket Mode。公開 URL 不要） |
 | GitHub | Free | 定期取り込み（Actions）。任意 |
 
+## まず手元だけで動かしてみる（Supabase / OpenAI 不要）
+
+PGlite（Node の中で動く PostgreSQL）と偽の Embedding を使い、取り込み → 検索 → 回答 → 評価を通しで試せる。
+偽 Embedding は文字の並びからベクトルを作るだけなので、検索精度は本物より低い。仕組みの確認用。
+
+1. ターミナル A（`模擬案件7` フォルダ）でローカル DB を起動したままにする
+   ```
+   npm run local:db
+   ```
+2. ターミナル B で、`.env.local.example` を `.env.local` にコピーし、以後のコマンドの前に 1 回だけ実行
+   ```
+   $env:DOTENV_CONFIG_PATH = ".env.local"
+   ```
+3. 順番に実行
+   ```
+   npm run db:migrate
+   npm run db:seed-users -- data/master/user_departments.example.csv
+   npm run ingest
+   npm run search -- --user UALLDEPTS "クラウド移行でコストはどれだけ下がった"
+   npm run search -- --user UHRONLY  "クラウド移行でコストはどれだけ下がった"   # 人事のみ → IT 文書は出ない
+   npm run answer -- --user UALLDEPTS "基幹システム移行で使われたデータベースは"
+   npm run eval
+   ```
+`$env:DOTENV_CONFIG_PATH` を消せば（ターミナルを閉じれば）通常の `.env`（Supabase）に戻る。
+
 ## セットアップ（すべて `模擬案件7` フォルダで実行）
 
 ### 1. 依存関係
@@ -106,6 +131,9 @@ GitHub のプライベートリポジトリに push し、Settings → Secrets �
 | `EMBEDDING_MODEL` | text-embedding-3-small | 次元数 1536（DB と一致させる） |
 | `SEARCH_TOP_K` | 5 | 回答に使う上位チャンク数 |
 | `SIMILARITY_THRESHOLD` | 0.40 | これ未満は「該当なし」。`npm run eval` の「閾値の目安」で校正 |
+| `EMBEDDING_PROVIDER` | openai | `fake` にすると OpenAI を呼ばない簡易ベクトル（ローカル確認用） |
+| `LLM_PROVIDER` | openai | `fake` にすると 1 位チャンクを引用する模擬応答 |
+| `DB_BOT_SET_ROLE` | (空) | ローカル PGlite 用。`rag_bot` を指定すると検索トランザクション内で SET ROLE する |
 
 ## セキュリティ設計の要点
 - ボットは `rag_bot` ロール（SELECT のみ・`BYPASSRLS` なし）で接続し、検索のたびにトランザクション内で Slack ユーザー ID を `set_config` する

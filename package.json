@@ -9,6 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "local:db": "tsx scripts/local-db.ts",
     "db:ping": "tsx src/cli/db-ping.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:stats": "tsx src/cli/db-stats.ts",
@@ -35,6 +36,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@electric-sql/pglite-pgvector": "^0.0.9",
+    "@electric-sql/pglite-socket": "^0.2.11",
     "@types/node": "^26.4.1",
     "docx": "^9.7.1",
     "tsx": "^4.23.13",

@@ -37,11 +37,18 @@ export async function getUserDepartments(slackUserId: string): Promise<Departmen
   });
 }
 
+/** 依存の差し替え口（テスト用）。undefined で既定に戻る */
+let _searchOverride: typeof searchChunks | undefined;
+export function setSearchOverride(fn: typeof searchChunks | undefined): void {
+  _searchOverride = fn;
+}
+
 export async function searchChunks(
   slackUserId: string,
   question: string,
   opts: { topK?: number; embedder?: EmbeddingClient } = {},
 ): Promise<SearchResult> {
+  if (_searchOverride) return _searchOverride(slackUserId, question, opts);
   const topK = opts.topK ?? config.search.topK;
   const departmentIds = await getUserDepartments(slackUserId);
   if (departmentIds.length === 0) {

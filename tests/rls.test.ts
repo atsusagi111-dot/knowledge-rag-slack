@@ -69,7 +69,8 @@ d("RLS: 部署別アクセス制御", () => {
     expect(await searchByVector(NOBODY, zeroVec, 100)).toEqual([]);
   });
 
-  it("set_config 無しで bot ロールが読むと 0 件（安全側に倒れる）", async () => {
+  // ローカル PGlite（DB_BOT_SET_ROLE 指定時）は bot 接続も管理者なので、この検証は Supabase でのみ有効
+  it.skipIf(Boolean(process.env.DB_BOT_SET_ROLE))("set_config 無しで bot ロールが読むと 0 件（安全側に倒れる）", async () => {
     const rows = await botSql()`select count(*)::int as n from chunks`;
     expect(rows[0].n).toBe(0);
   });

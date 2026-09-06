@@ -126,6 +126,35 @@ const SYSTEM_PROMPT = `あなたはコンサルティング会社の社内ナレ
 4. 数値・固有名詞は参考文書の記載どおりに書いてください。
 5. 複数の文書に関係する場合は、文書ごとに分けて記述してください。`;
 
+/** LLM 呼び出しの差し替え口（テストでは偽物を注入する） */
+export type ChatFn = (system: string, user: string) => Promise<string>;
+
+const openaiChat: ChatFn = async (system, user) => {
+  const res = await openai().chat.completions.create({
+    model: config.openai.chatModel,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+  });
+  return res.choices[0]?.message?.content?.trim() ?? "";
+};
+
+/** OpenAI を呼ばない偽 LLM: 1 位のチャンク冒頭を引用して返す（ローカル動作確認用） */
+const fakeChat: ChatFn = async (_system, user) => {
+  const first = user.match(/\[1\] 文書: ([^\n]+)\n([^\n]+)/);
+  if (!first) return NO_ANSWER_TOKEN;
+  return `（ローカル模擬応答）${first[2].slice(0, 80)} [1]`;
+};
+
+let _chat: ChatFn | undefined;
+export function setChatFn(fn: ChatFn | undefined): void {
+  _chat = fn;
+}
+function chat(): ChatFn {
+  return _chat ?? (config.llmProvider === "fake" ? fakeChat : openaiChat);
+}
+
 async function generate(question: string, hits: SearchHit[], citations: Citation[]): Promise<{ text: string; noAnswer: boolean }> {
   const context = hits
     .map((h, i) => {
@@ -134,14 +163,7 @@ async function generate(question: string, hits: SearchHit[], citations: Citation
     })
     .join("\n\n---\n\n");
 
-  const res = await openai().chat.completions.create({
-    model: config.openai.chatModel,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: `# 参考文書\n\n${context}\n\n# 質問\n${question}` },
-    ],
-  });
-  const text = res.choices[0]?.message?.content?.trim() ?? "";
+  const text = (await chat()(SYSTEM_PROMPT, `# 参考文書\n\n${context}\n\n# 質問\n${question}`)).trim();
   const noAnswer = text.length === 0 || text.includes(NO_ANSWER_TOKEN) || !/\[\d+\]/.test(text);
   return { text, noAnswer };
 }

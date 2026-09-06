@@ -7,28 +7,37 @@
 import postgres, { type Sql, type TransactionSql } from "postgres";
 import { config } from "../config.js";
 
-const common = {
-  // Supabase Session pooler は接続数に上限があるので少なめに
-  max: 3,
-  idle_timeout: 20,
-  connect_timeout: 15,
-  // Supabase は TLS 必須
-  ssl: "require" as const,
-  // vector 型は extensions スキーマにあるので検索パスに入れる（接続時に設定）
-  connection: { search_path: "public, extensions" },
-  transform: { undefined: null },
-};
+function options(url: string) {
+  const local = /@(127\.0\.0\.1|localhost)[:/]/.test(url);
+  return {
+    // Supabase Session pooler は接続数に上限があるので少なめに
+    max: 3,
+    idle_timeout: 20,
+    connect_timeout: 15,
+    // Supabase は TLS 必須。ローカル PGlite は TLS 非対応
+    ssl: local ? false : ("require" as const),
+    // vector 型は extensions スキーマにあるので検索パスに入れる（接続時に設定）
+    connection: { search_path: "public, extensions" },
+    transform: { undefined: null },
+    // "does not exist, skipping" のような NOTICE は表示しない（WARNING 以上は出す）
+    onnotice: (n: { severity?: string; message?: string }) => {
+      if (n.severity && n.severity !== "NOTICE") console.warn(`[db ${n.severity}] ${n.message}`);
+    },
+    // ローカル PGlite は prepared statement 周りが本物と少し違うので無効化
+    prepare: !local,
+  };
+}
 
 let _ingest: Sql | undefined;
 let _bot: Sql | undefined;
 
 export function ingestSql(): Sql {
-  if (!_ingest) _ingest = postgres(config.db.ingestUrl, common);
+  if (!_ingest) _ingest = postgres(config.db.ingestUrl, options(config.db.ingestUrl));
   return _ingest;
 }
 
 export function botSql(): Sql {
-  if (!_bot) _bot = postgres(config.db.botUrl, common);
+  if (!_bot) _bot = postgres(config.db.botUrl, options(config.db.botUrl));
   return _bot;
 }
 
@@ -47,6 +56,10 @@ export async function withSlackUser<T>(
     throw new Error(`不正な Slack ユーザー ID です: ${slackUserId}`);
   }
   return sql.begin(async (tx) => {
+    if (config.db.botSetRole) {
+      // ローカル PGlite 用。Supabase では rag_bot でログインするので不要
+      await tx.unsafe(`set local role ${config.db.botSetRole}; set local search_path = public, extensions`);
+    }
     await tx`select set_config('app.slack_user_id', ${slackUserId}, true)`;
     return fn(tx as unknown as TransactionSql);
   }) as Promise<T>;

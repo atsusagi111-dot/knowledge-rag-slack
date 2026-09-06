@@ -8,3 +8,4 @@ data/
 eval/results/
 .claude/worktrees/
 *.log
+!.env.local.example
