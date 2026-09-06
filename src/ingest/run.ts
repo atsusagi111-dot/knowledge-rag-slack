@@ -18,6 +18,8 @@ import { defaultEmbeddingClient, type EmbeddingClient } from "./embed.js";
 export interface IngestOptions {
   force?: boolean;
   dryRun?: boolean;
+  /** 取り込み元に存在しなくなった文書を DB から削除する（機密扱い変更・退役時の同期） */
+  prune?: boolean;
 }
 
 export interface IngestSummary {
@@ -26,6 +28,8 @@ export interface IngestSummary {
   skipped: number;
   failed: number;
   chunks: number;
+  /** --prune で削除した文書数 */
+  pruned: number;
 }
 
 export async function ingest(
@@ -33,10 +37,12 @@ export async function ingest(
   opts: IngestOptions = {},
   embedder: EmbeddingClient = opts.dryRun ? (null as unknown as EmbeddingClient) : defaultEmbeddingClient(),
 ): Promise<IngestSummary> {
-  const summary: IngestSummary = { inserted: 0, updated: 0, skipped: 0, failed: 0, chunks: 0 };
+  const summary: IngestSummary = { inserted: 0, updated: 0, skipped: 0, failed: 0, chunks: 0, pruned: 0 };
   const sql = opts.dryRun ? null : ingestSql();
 
+  const seen = new Set<string>();
   for await (const file of source.list()) {
+    seen.add(file.path);
     try {
       const result = await ingestOne(source, file, opts, embedder, sql);
       summary[result.status]++;
@@ -45,6 +51,19 @@ export async function ingest(
     } catch (e) {
       summary.failed++;
       console.error(`failed   ${file.path}: ${(e as Error).message}`);
+    }
+  }
+
+  if (opts.prune && sql) {
+    // 取り込み元から消えた文書を DB からも削除する（chunks は on delete cascade で一緒に消える）。
+    // 機密扱いの変更（他部署に見せない・退役）は「元ファイルを消す/移す → --prune」で DB に反映される
+    const existing = await sql<{ id: string; source_path: string; department_id: string }[]>`
+      select id, source_path, department_id from documents where source_type = ${source.type}`;
+    for (const d of existing) {
+      if (seen.has(d.source_path)) continue;
+      await sql`delete from documents where id = ${d.id}`;
+      summary.pruned++;
+      console.log(`pruned   ${d.source_path}  (${d.department_id})`);
     }
   }
   return summary;
@@ -109,12 +128,16 @@ async function ingestOne(
 
 /** CLI から呼ぶ入口（src/cli/ingest.ts が使う） */
 export async function runIngestCli(argv: string[]): Promise<void> {
-  const opts: IngestOptions = { force: argv.includes("--force"), dryRun: argv.includes("--dry-run") };
+  const opts: IngestOptions = {
+    force: argv.includes("--force"),
+    dryRun: argv.includes("--dry-run"),
+    prune: argv.includes("--prune"),
+  };
   const dir = argv.find((a) => !a.startsWith("--")) ?? config.docsDir;
-  console.log(`取り込み元: ${path.resolve(dir)}  ${opts.dryRun ? "(dry-run)" : ""}${opts.force ? "(force)" : ""}`);
+  console.log(`取り込み元: ${path.resolve(dir)}  ${opts.dryRun ? "(dry-run)" : ""}${opts.force ? "(force)" : ""}${opts.prune ? "(prune)" : ""}`);
   try {
     const s = await ingest(new LocalFolderSource(dir), opts);
-    console.log(`\n結果: 新規 ${s.inserted} / 更新 ${s.updated} / スキップ ${s.skipped} / 失敗 ${s.failed} / チャンク ${s.chunks}`);
+    console.log(`\n結果: 新規 ${s.inserted} / 更新 ${s.updated} / スキップ ${s.skipped} / 失敗 ${s.failed} / 削除 ${s.pruned} / チャンク ${s.chunks}`);
     if (s.failed > 0) process.exitCode = 1;
   } finally {
     await closeAll();
