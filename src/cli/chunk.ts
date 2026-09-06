@@ -1,7 +1,10 @@
 /** チャンク分割テスト:  npm run chunk -- data/docs/strategy/xxx.pdf [--full] */
 import { readFile } from "node:fs/promises";
 import { extractText } from "../ingest/extract.js";
+import path from "node:path";
 import { chunkPages } from "../ingest/chunk.js";
+import { extractMetadata } from "../ingest/metadata.js";
+import { config } from "../config.js";
 import { fileTypeFromName } from "../sources/DocumentSource.js";
 
 async function main() {
@@ -12,7 +15,8 @@ async function main() {
   const type = fileTypeFromName(file);
   if (!type) throw new Error("pdf か docx を指定してください");
   const ex = await extractText(await readFile(file), type);
-  const chunks = chunkPages(ex.pages);
+  const meta = extractMetadata(ex.fullText, path.basename(file), path.basename(path.dirname(path.resolve(file))));
+  const chunks = chunkPages(ex.pages, config.chunk, meta.title);
   console.log(`${chunks.length} チャンク（合計 ${chunks.reduce((s, c) => s + c.tokenCount, 0)} トークン）\n`);
   for (const c of chunks) {
     console.log(`#${c.index}  [${c.sectionTitle ?? "(見出しなし)"}]  p.${c.pageStart}-${c.pageEnd}  ${c.tokenCount} tokens`);

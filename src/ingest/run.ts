@@ -66,7 +66,7 @@ async function ingestOne(
     throw new Error("部署を特定できません。冒頭に「部署: 戦略」の行を入れるか、部署名フォルダに置いてください");
   }
   const hash = createHash("sha256").update(extracted.fullText).digest("hex");
-  const chunks = chunkPages(extracted.pages);
+  const chunks = chunkPages(extracted.pages, config.chunk, meta.title);
 
   if (opts.dryRun || !sql) {
     return { status: "skipped", chunks: chunks.length, department: meta.departmentId };

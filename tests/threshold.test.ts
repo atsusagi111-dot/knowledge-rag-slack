@@ -27,6 +27,6 @@ describe("applyThreshold", () => {
   it("1 位が閾値以上なら通過し、離れすぎたチャンクは落とす", () => {
     const d = applyThreshold([hit(0.6), hit(0.5), hit(0.42), hit(0.3)], 0.4);
     expect(d.passed).toBe(true);
-    expect(d.hits.map((h) => h.score)).toEqual([0.6, 0.5]);
+    expect(d.hits.map((h) => h.score)).toEqual([0.6, 0.5, 0.42]);
   });
 });

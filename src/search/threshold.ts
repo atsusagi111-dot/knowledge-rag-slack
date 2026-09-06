@@ -14,12 +14,16 @@ export interface ThresholdDecision {
   hits: SearchHit[];
 }
 
+export const MAX_GAP_FROM_TOP = 0.25;
+
 export function applyThreshold(hits: SearchHit[], threshold = config.search.similarityThreshold): ThresholdDecision {
   const topScore = hits.length > 0 ? hits[0].score : null;
   if (topScore === null || topScore < threshold) {
     return { passed: false, topScore, threshold, hits: [] };
   }
-  // 1 位から大きく離れたチャンクはノイズになるので落とす（1 位との差が 0.15 以上）
-  const kept = hits.filter((h) => h.score >= threshold && topScore - h.score <= 0.15);
+  // 1 位から大きく離れたチャンクはノイズになるので落とす。
+  // 差の上限は 0.25。0.15 だと、客先名入りの質問で「表紙チャンク」が 1 位になったとき
+  // 本文チャンク（差 0.2 前後）まで捨ててしまい、LLM が該当なしと答える事故が起きた（36 件検証時）
+  const kept = hits.filter((h) => h.score >= threshold && topScore - h.score <= MAX_GAP_FROM_TOP);
   return { passed: true, topScore, threshold, hits: kept };
 }

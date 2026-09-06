@@ -61,7 +61,8 @@ export const config = {
     chatModel: optional("CHAT_MODEL", "gpt-5-nano"),
   },
   search: {
-    topK: Number(optional("SEARCH_TOP_K", "5")),
+    /** 回答に渡す上位チャンク数。36 件 183 チャンクで 5 だと同一文書の別セクションが漏れたため 8 */
+    topK: Number(optional("SEARCH_TOP_K", "8")),
     /** コサイン類似度がこれ未満なら「該当なし」 */
     similarityThreshold: Number(optional("SIMILARITY_THRESHOLD", "0.40")),
   },

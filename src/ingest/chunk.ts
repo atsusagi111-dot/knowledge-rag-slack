@@ -28,7 +28,8 @@ export function countTokens(text: string): number {
 const HEADING_PATTERNS = [
   /^#{1,6}\s+\S/, // Markdown
   /^(?:第\s*\d+\s*[章節項]|\d+(?:\.\d+)*[.．)]?\s+\S|[（(]?\d+[）)]\s*\S|[IVX]+\.\s+\S|[①-⑳]\s*\S)/, // 番号付き
-  /^[■□◆◇●○▼▶]\s*\S/, // 記号付き
+  // 記号付き。● ○ は Word→PDF 変換で箇条書きの点になるため見出し扱いしない（36 件検証で断片化が発生）
+  /^[■□◆◇▼▶]\s*\S/,
 ];
 
 export function isHeading(line: string): boolean {
@@ -110,7 +111,11 @@ function splitLong(text: string, maxTokens: number, overlapTokens: number): stri
   return out;
 }
 
-export function chunkPages(pages: ExtractedPage[], opts = config.chunk): Chunk[] {
+/**
+ * @param docTitle 文書タイトル。指定すると各チャンクの先頭に「タイトル > 見出し」を付けて Embedding する（文脈付きチャンク）。
+ *   数値中心のセクション（ROI 試算など）に文書名の手がかりが無く、「○○向け提案の…」という質問で拾えなかった問題への対策。
+ */
+export function chunkPages(pages: ExtractedPage[], opts = config.chunk, docTitle?: string): Chunk[] {
   const sections = splitSections(pages);
 
   // 小さいセクションは次に結合
@@ -133,7 +138,8 @@ export function chunkPages(pages: ExtractedPage[], opts = config.chunk): Chunk[]
     const pieces = countTokens(body) <= opts.maxTokens ? [body] : splitLong(body, opts.maxTokens, opts.overlapTokens);
     for (const piece of pieces) {
       // 見出しをチャンク本文の先頭にも入れる（検索時に文脈が伝わる）
-      const content = s.title ? `${s.title}\n${piece}` : piece;
+      const header = [docTitle, s.title].filter(Boolean).join(" > ");
+      const content = header ? `${header}\n${piece}` : piece;
       if (content.trim().length === 0) continue;
       chunks.push({
         index: chunks.length,
