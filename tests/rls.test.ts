@@ -14,7 +14,9 @@ const IT_USER = "UTESTITONLY";
 const BOTH_USER = "UTESTHRANDIT";
 const NOBODY = "UTESTNOBODY";
 
-const hasDb = Boolean(process.env.DATABASE_URL_INGEST && process.env.DATABASE_URL_BOT);
+// .env が未記入（プレースホルダのまま）なら実 DB テストはスキップ
+const looksReal = (v?: string) => Boolean(v && v.startsWith("postgresql://"));
+const hasDb = looksReal(process.env.DATABASE_URL_INGEST) && looksReal(process.env.DATABASE_URL_BOT);
 const d = hasDb ? describe : describe.skip;
 
 d("RLS: 部署別アクセス制御", () => {

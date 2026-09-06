@@ -3,9 +3,12 @@ dist/
 .env
 .env.*
 !.env.example
-data/
-!data/.gitkeep
+!.env.local.example
+# 文書・マスタ・ローカル DB は git に入れない（例ファイルだけ入れる）
+data/*
+!data/master/
+data/master/*
+!data/master/*.example.csv
 eval/results/
 .claude/worktrees/
 *.log
-!.env.local.example

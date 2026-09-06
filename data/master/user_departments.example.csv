@@ -1,0 +1,8 @@
+slack_user_id,department_id,display_name
+UHRONLY,hr,2つ目(人事のみ)
+UALLDEPTS,strategy,本人(全部署)
+UALLDEPTS,operations,本人(全部署)
+UALLDEPTS,it,本人(全部署)
+UALLDEPTS,hr,本人(全部署)
+UALLDEPTS,sales,本人(全部署)
+UALLDEPTS,admin,本人(全部署)
