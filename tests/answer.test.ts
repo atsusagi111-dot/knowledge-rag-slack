@@ -1,103 +1,73 @@
 /**
- * 回答生成の流れを、DB と OpenAI を偽物に差し替えて検証する。
+ * 回答生成の流れを、検索と LLM を引数で差し替えて検証する（DB も OpenAI も使わない）。
  *  - 未登録ユーザー → unregistered
  *  - 閾値未満 → no_hit（LLM を呼ばない）
  *  - LLM が NO_ANSWER → no_hit
  *  - LLM が出典番号無しで答えた → no_hit（ハルシネーション対策 2 段目）
  *  - 正常 → answered + 出典
  */
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { answerQuestion, setChatFn, NO_HIT_MESSAGE } from "../src/search/answer.js";
-import { setSearchOverride, type SearchHit, type SearchResult } from "../src/search/search.js";
+import { describe, it, expect } from "vitest";
+import { answerQuestion, NO_HIT_MESSAGE, type AnswerDeps } from "../src/search/answer.js";
+import type { SearchResult } from "../src/search/search.js";
+import { makeHit } from "./fixtures.js";
 
-const hit = (score: number, title = "銀行A向け DX 提案書"): SearchHit => ({
-  chunkId: `c${score}`,
-  documentId: "d1",
-  title,
-  fileName: "case7-doc1-strategy-dx-bank.pdf",
-  departmentId: "strategy",
-  createdYear: 2024,
-  sectionTitle: "4. ROI 試算",
-  pageStart: 2,
-  pageEnd: 2,
-  content: "窓口handling時間 18分 → 9分（50%削減）により、年間およそ1.2億円の人件費削減効果",
-  score,
-});
-
-let calls = 0;
-function mockSearch(result: SearchResult) {
-  setSearchOverride(async () => result);
+function deps(result: SearchResult, reply: string | Error): AnswerDeps & { calls: () => number } {
+  let calls = 0;
+  return {
+    search: async () => result,
+    chat: async () => {
+      calls++;
+      if (reply instanceof Error) throw reply;
+      return reply;
+    },
+    calls: () => calls,
+  };
 }
-function mockChat(reply: string) {
-  setChatFn(async () => {
-    calls++;
-    return reply;
-  });
-}
-
-beforeEach(() => {
-  calls = 0;
-  process.env.SIMILARITY_THRESHOLD = "0.40";
-});
-afterEach(() => {
-  setSearchOverride(undefined);
-  setChatFn(undefined);
-});
-
-const opts = { skipLog: true };
+const found = (...scores: number[]): SearchResult => ({ hits: scores.map((score) => makeHit({ score })), departmentIds: ["strategy"], unregistered: false });
+const opts = (d: AnswerDeps) => ({ skipLog: true, deps: d });
 
 describe("answerQuestion", () => {
   it("未登録ユーザーは unregistered", async () => {
-    mockSearch({ hits: [], departmentIds: [], unregistered: true });
-    mockChat("x");
-    const r = await answerQuestion("U1", "q", opts);
-    expect(r.status).toBe("unregistered");
-    expect(calls).toBe(0);
+    const d = deps({ hits: [], departmentIds: [], unregistered: true }, "x");
+    expect((await answerQuestion("U1", "q", opts(d))).status).toBe("unregistered");
+    expect(d.calls()).toBe(0);
   });
 
   it("閾値未満なら LLM を呼ばず no_hit", async () => {
-    mockSearch({ hits: [hit(0.31)], departmentIds: ["strategy"], unregistered: false });
-    mockChat("x");
-    const r = await answerQuestion("U1", "医療業界向けの提案書は？", opts);
+    const d = deps(found(0.31), "x");
+    const r = await answerQuestion("U1", "医療業界向けの提案書は？", opts(d));
     expect(r.status).toBe("no_hit");
     expect(r.text).toBe(NO_HIT_MESSAGE);
     expect(r.topScore).toBe(0.31);
-    expect(calls).toBe(0);
+    expect(d.calls()).toBe(0);
   });
 
   it("LLM が NO_ANSWER を返したら no_hit", async () => {
-    mockSearch({ hits: [hit(0.55)], departmentIds: ["strategy"], unregistered: false });
-    mockChat("NO_ANSWER");
-    const r = await answerQuestion("U1", "q", opts);
-    expect(r.status).toBe("no_hit");
-    expect(calls).toBe(1);
+    const d = deps(found(0.55), "NO_ANSWER");
+    expect((await answerQuestion("U1", "q", opts(d))).status).toBe("no_hit");
+    expect(d.calls()).toBe(1);
   });
 
   it("出典番号が無い回答は no_hit 扱い（でっち上げ防止）", async () => {
-    mockSearch({ hits: [hit(0.55)], departmentIds: ["strategy"], unregistered: false });
-    mockChat("おそらく 5 億円くらい削減できます。");
-    const r = await answerQuestion("U1", "q", opts);
-    expect(r.status).toBe("no_hit");
+    const d = deps(found(0.55), "おそらく 5 億円くらい削減できます。");
+    expect((await answerQuestion("U1", "q", opts(d))).status).toBe("no_hit");
   });
 
   it("正常時は answered と出典が返る", async () => {
-    mockSearch({ hits: [hit(0.62), hit(0.58), hit(0.2)], departmentIds: ["strategy"], unregistered: false });
-    mockChat("窓口時間の半減で年間約 1.2 億円の人件費削減が見込まれます [1]。");
-    const r = await answerQuestion("U1", "人件費はどれくらい削減？", opts);
+    const d = deps(found(0.62, 0.58, 0.2), "窓口時間の半減で年間約 1.2 億円の人件費削減が見込まれます [1]。");
+    const r = await answerQuestion("U1", "人件費はどれくらい削減？", opts(d));
     expect(r.status).toBe("answered");
     expect(r.text).toContain("[1]");
     // 0.2 のチャンクは 1 位から離れすぎているので出典に含まれない
     expect(r.citations.length).toBe(2);
     expect(r.citations[0]).toMatchObject({ n: 1, department: "戦略", page: "p.2" });
+    expect(r.citations[0].label).toContain("case7-doc1-strategy-dx-bank.pdf p.2");
     expect(r.hits.length).toBe(3);
   });
 
   it("LLM がエラーを投げたら error", async () => {
-    mockSearch({ hits: [hit(0.6)], departmentIds: ["strategy"], unregistered: false });
-    setChatFn(async () => {
-      throw new Error("rate limit");
-    });
-    const r = await answerQuestion("U1", "q", opts);
+    const d = deps(found(0.6), new Error("rate limit"));
+    const r = await answerQuestion("U1", "q", opts(d));
     expect(r.status).toBe("error");
     expect(r.text).toContain("rate limit");
   });

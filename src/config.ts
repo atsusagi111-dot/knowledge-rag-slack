@@ -1,5 +1,5 @@
 /**
- * 環境変数・モデル名・閾値を 1 か所にまとめる。
+ * 環境変数・モデル名・閾値・部署定義を 1 か所にまとめる。
  * ここ以外のファイルで process.env を直接読まないこと。
  */
 import "dotenv/config";
@@ -18,21 +18,40 @@ function optional(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
 }
 
-/** 部署 ID（DB の departments.id と一致させる） */
-export const DEPARTMENT_IDS = ["strategy", "operations", "it", "hr", "sales", "admin", "confidential"] as const;
-export type DepartmentId = (typeof DEPARTMENT_IDS)[number];
-
-/** 日本語名 ↔ 部署 ID の対応 */
-export const DEPARTMENT_NAME_JA: Record<DepartmentId, string> = {
-  strategy: "戦略",
-  operations: "業務",
-  it: "IT",
-  hr: "人事",
-  sales: "営業",
-  admin: "管理",
+/**
+ * 部署の唯一の定義。DB の departments テーブル（supabase/migrations の seed）と一致させる。
+ * aliases は文書の冒頭行・フォルダ名・CSV に書かれる表記ゆれ。
+ */
+export const DEPARTMENTS = [
+  { id: "strategy", nameJa: "戦略", aliases: ["戦略部"] },
+  { id: "operations", nameJa: "業務", aliases: ["業務部", "ops"] },
+  { id: "it", nameJa: "IT", aliases: ["it部", "情報システム"] },
+  { id: "hr", nameJa: "人事", aliases: ["人事部"] },
+  { id: "sales", nameJa: "営業", aliases: ["営業部"] },
+  { id: "admin", nameJa: "管理", aliases: ["管理部", "総務"] },
   /** 機密区分。この部署を付与された人だけが閲覧できる */
-  confidential: "機密",
-};
+  { id: "confidential", nameJa: "機密", aliases: ["機密文書"] },
+] as const;
+
+export type DepartmentId = (typeof DEPARTMENTS)[number]["id"];
+export const DEPARTMENT_IDS = DEPARTMENTS.map((d) => d.id) as DepartmentId[];
+
+const LABELS = new Map<string, string>(DEPARTMENTS.map((d) => [d.id, d.nameJa]));
+/** 部署 ID → 日本語名（未知の ID はそのまま返す） */
+export function departmentLabel(id: string): string {
+  return LABELS.get(id) ?? id;
+}
+
+const ALIAS_TO_ID = new Map<string, DepartmentId>();
+for (const d of DEPARTMENTS) {
+  for (const key of [d.id, d.nameJa, ...d.aliases]) ALIAS_TO_ID.set(key.toLowerCase(), d.id);
+}
+/** 「戦略」「hr」「IT部」「人事 / 客先: ...」などの表記から部署 ID を返す。判定できなければ null */
+export function resolveDepartment(raw: string | undefined | null): DepartmentId | null {
+  if (!raw) return null;
+  const key = raw.trim().toLowerCase();
+  return ALIAS_TO_ID.get(key) ?? ALIAS_TO_ID.get(key.split(/[\s/／:：]/)[0]) ?? null;
+}
 
 export const config = {
   db: {
@@ -47,10 +66,10 @@ export const config = {
     get ragBotPassword() {
       return required("RAG_BOT_PASSWORD");
     },
-    /** ローカル PGlite 用: bot 接続の中で SET ROLE するロール名（Supabase では空のまま） */
-    botSetRole: optional("DB_BOT_SET_ROLE", ""),
+    /** TLS。Supabase は require、ローカル PGlite は disable */
+    ssl: optional("DATABASE_SSL", "require") as "require" | "disable",
   },
-  /** 'openai' | 'fake'（fake は OpenAI を呼ばないローカル動作確認用） */
+  /** 'openai' | 'fake'（fake は OpenAI を呼ばないローカル動作確認用。providers.ts だけが参照する） */
   embeddingProvider: optional("EMBEDDING_PROVIDER", "openai"),
   llmProvider: optional("LLM_PROVIDER", "openai"),
   openai: {
@@ -60,6 +79,7 @@ export const config = {
     embeddingModel: optional("EMBEDDING_MODEL", "text-embedding-3-small"),
     /** text-embedding-3-small の次元数。DB の vector(1536) と一致させる */
     embeddingDimensions: 1536,
+    /** nano は該当文書が無い場面で別案件の数値を流用することがあったため mini を既定に */
     chatModel: optional("CHAT_MODEL", "gpt-5-mini"),
     /** gpt-5 系の推論量。minimal は最速だが稀に該当なし誤判定、low は 2〜5 秒で安定（既定）。空文字で API 既定 */
     reasoningEffort: optional("CHAT_REASONING_EFFORT", "low"),

@@ -5,13 +5,14 @@
  * ハルシネーション対策（2 段目）:
  *  - 渡したチャンク以外を根拠にしない・根拠が無ければ NO_ANSWER と書く、とプロンプトで指示
  *  - 回答に出典番号 [n] が 1 つも無ければ該当なし扱い
+ *
+ * 依存（検索関数・LLM）は deps で差し替えられる。既定は providers.ts が組み立てる。
  */
-import OpenAI from "openai";
-import { config } from "../config.js";
-import { searchChunks, type SearchHit } from "./search.js";
+import { config, departmentLabel } from "../config.js";
+import { chatFn, embeddingClient, type ChatFn } from "../providers.js";
+import { makeSearch, type SearchFn, type SearchHit } from "./search.js";
 import { applyThreshold } from "./threshold.js";
 import { writeSearchLog } from "../audit/log.js";
-import { DEPARTMENT_NAME_JA } from "../config.js";
 
 export type AnswerStatus = "answered" | "no_hit" | "unregistered" | "error";
 
@@ -23,7 +24,8 @@ export interface Citation {
   sectionTitle: string | null;
   page: string;
   score: number;
-  documentId: string;
+  /** 表示用の 1 行: 「タイトル ファイル名 p.N（部署 / 見出し）」 */
+  label: string;
 }
 
 export interface AnswerResult {
@@ -39,69 +41,75 @@ export interface AnswerResult {
   logId?: number;
 }
 
+export interface AnswerDeps {
+  search: SearchFn;
+  chat: ChatFn;
+}
+
+export interface AnswerOptions {
+  channelId?: string;
+  skipLog?: boolean;
+  /** テスト・評価用の差し替え口 */
+  deps?: Partial<AnswerDeps>;
+}
+
 const NO_ANSWER_TOKEN = "NO_ANSWER";
 export const NO_HIT_MESSAGE = "該当する文書は見つかりませんでした。質問の言い回しを変えるか、別のキーワードでお試しください。";
 export const UNREGISTERED_MESSAGE = "あなたの Slack アカウントは部署マスタに登録されていません。管理者に登録を依頼してください。";
 
-let _openai: OpenAI | undefined;
-function openai(): OpenAI {
-  if (!_openai) _openai = new OpenAI({ apiKey: config.openai.apiKey });
-  return _openai;
+let _defaultDeps: AnswerDeps | undefined;
+function defaultDeps(): AnswerDeps {
+  if (!_defaultDeps) _defaultDeps = { search: makeSearch(embeddingClient()), chat: chatFn() };
+  return _defaultDeps;
 }
 
-export async function answerQuestion(
-  slackUserId: string,
-  question: string,
-  opts: { channelId?: string; skipLog?: boolean } = {},
-): Promise<AnswerResult> {
+export async function answerQuestion(slackUserId: string, question: string, opts: AnswerOptions = {}): Promise<AnswerResult> {
   const started = Date.now();
   const model = config.openai.chatModel;
-  let result: AnswerResult;
+  const deps = { ...defaultDeps(), ...opts.deps };
   let departmentIds: string[] = [];
+  let status: AnswerStatus = "error";
+  let text = "";
+  let citations: Citation[] = [];
+  let hits: SearchHit[] = [];
+  let topScore: number | null = null;
 
   try {
-    const search = await searchChunks(slackUserId, question);
+    const search = await deps.search(slackUserId, question);
     departmentIds = search.departmentIds;
-
+    hits = search.hits;
     if (search.unregistered) {
-      result = { status: "unregistered", text: UNREGISTERED_MESSAGE, citations: [], hits: [], topScore: null, latencyMs: 0, model };
+      status = "unregistered";
+      text = UNREGISTERED_MESSAGE;
     } else {
       const decision = applyThreshold(search.hits);
-      if (!decision.passed) {
-        result = { status: "no_hit", text: NO_HIT_MESSAGE, citations: [], hits: search.hits, topScore: decision.topScore, latencyMs: 0, model };
+      topScore = decision.topScore;
+      const generated = decision.passed ? await generate(deps.chat, question, decision.hits) : null;
+      if (generated) {
+        status = "answered";
+        text = generated.text;
+        citations = generated.citations;
       } else {
-        const citations = buildCitations(decision.hits);
-        const generated = await generate(question, decision.hits, citations);
-        if (generated.noAnswer) {
-          result = { status: "no_hit", text: NO_HIT_MESSAGE, citations: [], hits: search.hits, topScore: decision.topScore, latencyMs: 0, model };
-        } else {
-          result = { status: "answered", text: generated.text, citations, hits: search.hits, topScore: decision.topScore, latencyMs: 0, model };
-        }
+        status = "no_hit";
+        text = NO_HIT_MESSAGE;
       }
     }
   } catch (e) {
-    result = {
-      status: "error",
-      text: `エラーが発生しました: ${(e as Error).message}`,
-      citations: [],
-      hits: [],
-      topScore: null,
-      latencyMs: 0,
-      model,
-    };
+    text = `エラーが発生しました: ${(e as Error).message}`;
+    citations = [];
+    hits = [];
   }
 
-  result.latencyMs = Date.now() - started;
-
+  const result: AnswerResult = { status, text, citations, hits, topScore, latencyMs: Date.now() - started, model };
   if (!opts.skipLog) {
     result.logId = await writeSearchLog({
       slackUserId,
       channelId: opts.channelId ?? null,
       question,
       departmentIds,
-      topChunkIds: result.hits.map((h) => h.chunkId),
-      topScores: result.hits.map((h) => h.score),
-      status: result.status,
+      topChunkIds: hits.map((h) => h.chunkId),
+      topScores: hits.map((h) => h.score),
+      status,
       model,
       latencyMs: result.latencyMs,
     }).catch((e) => {
@@ -113,16 +121,12 @@ export async function answerQuestion(
 }
 
 export function buildCitations(hits: SearchHit[]): Citation[] {
-  return hits.map((h, i) => ({
-    n: i + 1,
-    title: h.title,
-    fileName: h.fileName,
-    department: DEPARTMENT_NAME_JA[h.departmentId] ?? h.departmentId,
-    sectionTitle: h.sectionTitle,
-    page: h.pageStart == null ? "-" : h.pageStart === h.pageEnd || h.pageEnd == null ? `p.${h.pageStart}` : `p.${h.pageStart}-${h.pageEnd}`,
-    score: h.score,
-    documentId: h.documentId,
-  }));
+  return hits.map((h, i) => {
+    const page = h.pageStart == null ? "-" : h.pageStart === h.pageEnd || h.pageEnd == null ? `p.${h.pageStart}` : `p.${h.pageStart}-${h.pageEnd}`;
+    const department = departmentLabel(h.departmentId);
+    const where = [department, h.sectionTitle].filter(Boolean).join(" / ");
+    return { n: i + 1, title: h.title, fileName: h.fileName, department, sectionTitle: h.sectionTitle, page, score: h.score, label: `${h.title}  ${h.fileName} ${page}（${where}）` };
+  });
 }
 
 const SYSTEM_PROMPT = `あなたはコンサルティング会社の社内ナレッジ検索アシスタントです。
@@ -135,46 +139,11 @@ const SYSTEM_PROMPT = `あなたはコンサルティング会社の社内ナレ
 4. 数値・固有名詞は参考文書の記載どおりに書いてください。
 5. 複数の文書に関係する場合は、文書ごとに分けて記述してください。`;
 
-/** LLM 呼び出しの差し替え口（テストでは偽物を注入する） */
-export type ChatFn = (system: string, user: string) => Promise<string>;
-
-const openaiChat: ChatFn = async (system, user) => {
-  const res = await openai().chat.completions.create({
-    model: config.openai.chatModel,
-    // gpt-5 系は既定で「考える」時間を使い 8〜12 秒かかる。要約なら最小で十分（10 秒以内の応答要件）
-    ...(config.openai.reasoningEffort ? { reasoning_effort: config.openai.reasoningEffort as "minimal" | "low" | "medium" | "high" } : {}),
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-  });
-  return res.choices[0]?.message?.content?.trim() ?? "";
-};
-
-/** OpenAI を呼ばない偽 LLM: 1 位のチャンク冒頭を引用して返す（ローカル動作確認用） */
-const fakeChat: ChatFn = async (_system, user) => {
-  const first = user.match(/\[1\] 文書: ([^\n]+)\n([^\n]+)/);
-  if (!first) return NO_ANSWER_TOKEN;
-  return `（ローカル模擬応答）${first[2].slice(0, 80)} [1]`;
-};
-
-let _chat: ChatFn | undefined;
-export function setChatFn(fn: ChatFn | undefined): void {
-  _chat = fn;
-}
-function chat(): ChatFn {
-  return _chat ?? (config.llmProvider === "fake" ? fakeChat : openaiChat);
-}
-
-async function generate(question: string, hits: SearchHit[], citations: Citation[]): Promise<{ text: string; noAnswer: boolean }> {
-  const context = hits
-    .map((h, i) => {
-      const c = citations[i];
-      return `[${c.n}] 文書: ${c.title}（${c.fileName} / ${c.department} / ${c.page}${c.sectionTitle ? ` / ${c.sectionTitle}` : ""}）\n${h.content}`;
-    })
-    .join("\n\n---\n\n");
-
-  const text = (await chat()(SYSTEM_PROMPT, `# 参考文書\n\n${context}\n\n# 質問\n${question}`)).trim();
+/** LLM に回答を作らせる。根拠が無い（NO_ANSWER / 出典番号なし）なら null */
+async function generate(chat: ChatFn, question: string, hits: SearchHit[]): Promise<{ text: string; citations: Citation[] } | null> {
+  const citations = buildCitations(hits);
+  const context = hits.map((h, i) => `[${citations[i].n}] 文書: ${citations[i].label}\n${h.content}`).join("\n\n---\n\n");
+  const text = (await chat({ system: SYSTEM_PROMPT, user: `# 参考文書\n\n${context}\n\n# 質問\n${question}`, hits })).trim();
   const noAnswer = text.length === 0 || text.includes(NO_ANSWER_TOKEN) || !/\[\d+\]/.test(text);
-  return { text, noAnswer };
+  return noAnswer ? null : { text, citations };
 }

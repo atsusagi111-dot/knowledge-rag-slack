@@ -6,10 +6,22 @@
  */
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { ingestSql, closeAll } from "./client.js";
+import { ingestSql } from "./client.js";
 import { config } from "../config.js";
+import { runCli } from "../lib/cli.js";
 
 const MIGRATIONS_DIR = path.resolve("supabase/migrations");
+
+/** マイグレーション SQL を番号順に読み、ロールのパスワードを埋めて返す（テストからも使う） */
+export async function loadMigrations(ragBotPassword: string): Promise<{ file: string; body: string }[]> {
+  const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+  return Promise.all(
+    files.map(async (file) => ({
+      file,
+      body: (await readFile(path.join(MIGRATIONS_DIR, file), "utf8")).replaceAll("__RAG_BOT_PASSWORD__", ragBotPassword.replaceAll("'", "''")),
+    })),
+  );
+}
 
 async function main() {
   const sql = ingestSql();
@@ -17,21 +29,15 @@ async function main() {
     filename text primary key,
     applied_at timestamptz not null default now()
   )`;
+  const applied = new Set((await sql<{ filename: string }[]>`select filename from schema_migrations`).map((r) => r.filename));
 
-  const applied = new Set(
-    (await sql<{ filename: string }[]>`select filename from schema_migrations`).map((r) => r.filename),
-  );
-
-  const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
   let count = 0;
-  for (const file of files) {
+  const migrations = await loadMigrations(config.db.ragBotPassword);
+  for (const { file, body } of migrations) {
     if (applied.has(file)) {
       console.log(`skip    ${file}`);
       continue;
     }
-    let body = await readFile(path.join(MIGRATIONS_DIR, file), "utf8");
-    // ロール作成 SQL の中のプレースホルダを .env の値で置換
-    body = body.replaceAll("__RAG_BOT_PASSWORD__", config.db.ragBotPassword.replaceAll("'", "''"));
     console.log(`apply   ${file}`);
     await sql.begin(async (tx) => {
       await tx.unsafe(body);
@@ -39,12 +45,7 @@ async function main() {
     });
     count++;
   }
-  console.log(`done: ${count} 件適用, ${files.length - count} 件スキップ`);
+  console.log(`done: ${count} 件適用, ${migrations.length - count} 件スキップ`);
 }
 
-main()
-  .catch((e) => {
-    console.error("マイグレーション失敗:", e);
-    process.exitCode = 1;
-  })
-  .finally(closeAll);
+runCli(main);

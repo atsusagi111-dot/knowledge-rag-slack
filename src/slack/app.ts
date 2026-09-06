@@ -8,12 +8,7 @@ import { config } from "../config.js";
 import { registerHandlers } from "./handlers.js";
 import { closeAll } from "../db/client.js";
 
-const app = new App({
-  token: config.slack.botToken,
-  appToken: config.slack.appToken,
-  socketMode: true,
-});
-
+const app = new App({ token: config.slack.botToken, appToken: config.slack.appToken, socketMode: true });
 registerHandlers(app);
 
 app

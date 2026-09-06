@@ -1,6 +1,12 @@
 import { runIngestCli } from "../ingest/run.js";
+import { config } from "../config.js";
+import { embeddingClient } from "../providers.js";
+import { flag, positionals, runCli } from "../lib/cli.js";
 
-runIngestCli(process.argv.slice(2)).catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-});
+runCli(() =>
+  runIngestCli(
+    { force: flag("--force"), dryRun: flag("--dry-run"), prune: flag("--prune"), retryFailed: flag("--retry-failed") },
+    positionals()[0] ?? config.docsDir,
+    embeddingClient(),
+  ),
+);

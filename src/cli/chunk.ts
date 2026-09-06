@@ -1,31 +1,18 @@
 /** チャンク分割テスト:  npm run chunk -- data/docs/strategy/xxx.pdf [--full] */
-import { readFile } from "node:fs/promises";
-import { extractText } from "../ingest/extract.js";
-import path from "node:path";
-import { chunkPages } from "../ingest/chunk.js";
-import { extractMetadata } from "../ingest/metadata.js";
 import { config } from "../config.js";
-import { fileTypeFromName } from "../sources/DocumentSource.js";
+import { chunkPages } from "../ingest/chunk.js";
+import { analyzeLocalFile } from "../ingest/local.js";
+import { flag, positionals, runCli } from "../lib/cli.js";
 
-async function main() {
-  const args = process.argv.slice(2);
-  const file = args.find((a) => !a.startsWith("--"));
-  const full = args.includes("--full");
+runCli(async () => {
+  const file = positionals()[0];
   if (!file) throw new Error("使い方: npm run chunk -- <pdf または docx のパス> [--full]");
-  const type = fileTypeFromName(file);
-  if (!type) throw new Error("pdf か docx を指定してください");
-  const ex = await extractText(await readFile(file), type);
-  const meta = extractMetadata(ex.fullText, path.basename(file), path.basename(path.dirname(path.resolve(file))));
-  const chunks = chunkPages(ex.pages, config.chunk, meta.title);
+  const { extracted, meta } = await analyzeLocalFile(file);
+  const chunks = chunkPages(extracted.pages, config.chunk, meta.title);
   console.log(`${chunks.length} チャンク（合計 ${chunks.reduce((s, c) => s + c.tokenCount, 0)} トークン）\n`);
   for (const c of chunks) {
     console.log(`#${c.index}  [${c.sectionTitle ?? "(見出しなし)"}]  p.${c.pageStart}-${c.pageEnd}  ${c.tokenCount} tokens`);
-    console.log(full ? c.content : "   " + c.content.replace(/\n/g, " ").slice(0, 80) + (c.content.length > 80 ? "…" : ""));
+    console.log(flag("--full") ? c.content : "   " + c.content.replace(/\n/g, " ").slice(0, 80) + (c.content.length > 80 ? "…" : ""));
     console.log();
   }
-}
-
-main().catch((e) => {
-  console.error(e.message);
-  process.exitCode = 1;
 });

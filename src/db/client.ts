@@ -7,39 +7,43 @@
 import postgres, { type Sql, type TransactionSql } from "postgres";
 import { config } from "../config.js";
 
-function options(url: string) {
-  const local = /@(127\.0\.0\.1|localhost)[:/]/.test(url);
-  return {
-    // Supabase Session pooler は接続数に上限があるので少なめに
-    max: 3,
-    idle_timeout: 20,
-    connect_timeout: 15,
-    // Supabase は TLS 必須。ローカル PGlite は TLS 非対応
-    ssl: local ? false : ("require" as const),
-    // vector 型は extensions スキーマにあるので検索パスに入れる（接続時に設定）
-    connection: { search_path: "public, extensions" },
-    transform: { undefined: null },
-    // "does not exist, skipping" のような NOTICE は表示しない（WARNING 以上は出す）
-    onnotice: (n: { severity?: string; message?: string }) => {
-      if (n.severity && n.severity !== "NOTICE") console.warn(`[db ${n.severity}] ${n.message}`);
-    },
-    // ローカル PGlite は prepared statement 周りが本物と少し違うので無効化
-    prepare: !local,
-  };
-}
+const options = {
+  // Supabase Session pooler は接続数に上限があるので少なめに
+  max: 3,
+  idle_timeout: 20,
+  connect_timeout: 15,
+  ssl: config.db.ssl === "require" ? ("require" as const) : false,
+  // vector 型は extensions スキーマにあるので検索パスに入れる（接続時に設定）
+  connection: { search_path: "public, extensions" },
+  transform: { undefined: null },
+  // "does not exist, skipping" のような NOTICE は表示しない（WARNING 以上は出す）
+  onnotice: (n: { severity?: string; message?: string }) => {
+    if (n.severity && n.severity !== "NOTICE") console.warn(`[db ${n.severity}] ${n.message}`);
+  },
+  // プリペアドステートメントは使わない（PGlite との互換性のため。性能差は無視できる）
+  prepare: false,
+};
 
 let _ingest: Sql | undefined;
 let _bot: Sql | undefined;
 
 export function ingestSql(): Sql {
-  if (!_ingest) _ingest = postgres(config.db.ingestUrl, options(config.db.ingestUrl));
+  if (!_ingest) _ingest = postgres(config.db.ingestUrl, options);
   return _ingest;
 }
 
 export function botSql(): Sql {
-  if (!_bot) _bot = postgres(config.db.botUrl, options(config.db.botUrl));
+  if (!_bot) _bot = postgres(config.db.botUrl, options);
   return _bot;
 }
+
+/**
+ * ボット用トランザクションの冒頭で必ず実行する SQL。
+ *  - set local role rag_bot: 本番は rag_bot でログインしているので無害（自分自身への SET ROLE）。
+ *    ローカル PGlite は管理者ログインなので、ここで rag_bot に降格して RLS を効かせる
+ *  - search_path: SET ROLE ではログイン時の設定が引き継がれないため明示する
+ */
+export const BOT_SESSION_SQL = "set local role rag_bot; set local search_path = public, extensions";
 
 /**
  * 「この Slack ユーザーとして」DB を触るためのトランザクション。
@@ -47,19 +51,12 @@ export function botSql(): Sql {
  * RLS ポリシーは current_setting('app.slack_user_id') を見るので、
  * これを通さずに botSql を直接使うと 0 件しか返らない（安全側に倒れる）。
  */
-export async function withSlackUser<T>(
-  slackUserId: string,
-  fn: (tx: TransactionSql) => Promise<T>,
-  sql: Sql = botSql(),
-): Promise<T> {
-  if (!slackUserId || !/^[UW][A-Z0-9]+$/.test(slackUserId)) {
+export async function withSlackUser<T>(slackUserId: string, fn: (tx: TransactionSql) => Promise<T>): Promise<T> {
+  if (!/^[UW][A-Z0-9]+$/.test(slackUserId)) {
     throw new Error(`不正な Slack ユーザー ID です: ${slackUserId}`);
   }
-  return sql.begin(async (tx) => {
-    if (config.db.botSetRole) {
-      // ローカル PGlite 用。Supabase では rag_bot でログインするので不要
-      await tx.unsafe(`set local role ${config.db.botSetRole}; set local search_path = public, extensions`);
-    }
+  return botSql().begin(async (tx) => {
+    await tx.unsafe(BOT_SESSION_SQL);
     await tx`select set_config('app.slack_user_id', ${slackUserId}, true)`;
     return fn(tx as unknown as TransactionSql);
   }) as Promise<T>;
@@ -71,7 +68,7 @@ export async function closeAll(): Promise<void> {
   _bot = undefined;
 }
 
-/** number[] を pgvector が受け付ける文字列 '[0.1,0.2,...]' に変換 */
+/** number[] を pgvector が受け付ける文字列 '[0.1,0.2,...]' に変換（7 桁に丸めて転送量を半減） */
 export function toVectorLiteral(embedding: number[]): string {
-  return `[${embedding.join(",")}]`;
+  return `[${embedding.map((x) => Number(x.toFixed(7))).join(",")}]`;
 }

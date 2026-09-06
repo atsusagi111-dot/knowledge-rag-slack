@@ -31,7 +31,7 @@ Slack(Socket Mode) → 質問を Embedding → RLS 付きベクトル検索 → 
 |---|---|---|
 | Node.js 20 以上 | 無料 | 実行環境 |
 | Supabase | Free | PostgreSQL + pgvector + RLS |
-| OpenAI API | 前払い（最低 $5） | Embedding（text-embedding-3-small）と要約（gpt-5-nano） |
+| OpenAI API | 前払い（最低 $5） | Embedding（text-embedding-3-small）と要約（gpt-5-mini） |
 | Slack | Free | ボットの入口（Socket Mode。公開 URL 不要） |
 | GitHub | Free | 定期取り込み（Actions）。任意 |
 
@@ -127,7 +127,7 @@ npm run eval -- --no-llm # OpenAI の生成を呼ばず、検索と閾値だけ�
 
 ### 7. テスト
 ```
-npm test           # 単体テスト + ローカル RLS テスト（PGlite）+ 実 DB の RLS テスト（.env があるとき）
+npm test           # 単体テスト + ローカル RLS テスト（PGlite）。実 DB には触れない
 npm run test:rls   # 実 DB の RLS テストのみ
 ```
 `tests/rls-local.test.ts` は PGlite（Node 内で動く PostgreSQL）に `supabase/migrations` をそのまま流し、
@@ -173,7 +173,7 @@ Settings → Secrets に `DATABASE_URL_INGEST` `DATABASE_URL_BOT` `RAG_BOT_PASSW
 | `SIMILARITY_THRESHOLD` | 0.40 | これ未満は「該当なし」。`npm run eval` の「閾値の目安」で校正 |
 | `EMBEDDING_PROVIDER` | openai | `fake` にすると OpenAI を呼ばない簡易ベクトル（ローカル確認用） |
 | `LLM_PROVIDER` | openai | `fake` にすると 1 位チャンクを引用する模擬応答 |
-| `DB_BOT_SET_ROLE` | (空) | ローカル PGlite 用。`rag_bot` を指定すると検索トランザクション内で SET ROLE する |
+| `DATABASE_SSL` | require | ローカル PGlite は `disable` |
 
 ## 計画からの主な変更点（実装して分かったこと）
 - 生成モデル: gpt-5-nano → **gpt-5-mini**。nano は「該当する文書が無い」場面で別案件の数値を流用することがあり、mini は安定して該当なしを返した（1 問 0.3 円程度）

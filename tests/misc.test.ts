@@ -7,6 +7,7 @@ import { stripMention } from "../src/slack/handlers.js";
 import { formatAnswer } from "../src/slack/format.js";
 import { buildCitations } from "../src/search/answer.js";
 import { toVectorLiteral } from "../src/db/client.js";
+import { makeHit } from "./fixtures.js";
 
 describe("parseCsv", () => {
   it("ヘッダ付き CSV をオブジェクト配列にする（クォート・改行セル対応）", () => {
@@ -51,9 +52,9 @@ describe("slack", () => {
     expect(stripMention("<@U012ABC> 銀行 DX の ROI は？")).toBe("銀行 DX の ROI は？");
   });
   it("回答を Block Kit に整形し、出典を並べる", () => {
-    const hits = [
-      { chunkId: "c1", documentId: "d1", title: "銀行A向け DX 提案書", fileName: "case7-doc1-strategy-dx-bank.pdf", departmentId: "strategy" as const, createdYear: 2024, sectionTitle: "4. ROI 試算", pageStart: 2, pageEnd: 2, content: "x", score: 0.61 },
-    ];
+    const hits = [makeHit({ chunkId: "c1", score: 0.61 })];
+
+
     const citations = buildCitations(hits);
     expect(citations[0]).toMatchObject({ n: 1, department: "戦略", page: "p.2" });
     const out = formatAnswer({ status: "answered", text: "年間 1.2 億円 [1]", citations, hits, topScore: 0.61, latencyMs: 800, model: "gpt-5-nano" });
@@ -64,6 +65,6 @@ describe("slack", () => {
 
 describe("toVectorLiteral", () => {
   it("pgvector の文字列形式にする", () => {
-    expect(toVectorLiteral([0.1, -0.2, 3])).toBe("[0.1,-0.2,3]");
+    expect(toVectorLiteral([0.1, -0.2, 3, 0.123456789])).toBe("[0.1,-0.2,3,0.1234568]");
   });
 });

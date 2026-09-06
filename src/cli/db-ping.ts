@@ -1,7 +1,8 @@
 /** 接続テスト:  npm run db:ping */
-import { ingestSql, botSql, closeAll } from "../db/client.js";
+import { ingestSql, botSql } from "../db/client.js";
+import { runCli } from "../lib/cli.js";
 
-async function main() {
+runCli(async () => {
   const [v] = await ingestSql()`select version() as version, current_user as role`;
   console.log(`ok  (ingest 接続) role=${v.role}`);
   console.log(`    ${String(v.version).split(",")[0]}`);
@@ -13,11 +14,4 @@ async function main() {
   } catch (e) {
     console.log(`--  bot 接続は未設定または失敗（db:migrate 後に確認）: ${(e as Error).message.split("\n")[0]}`);
   }
-}
-
-main()
-  .catch((e) => {
-    console.error("NG  接続失敗:", (e as Error).message);
-    process.exitCode = 1;
-  })
-  .finally(closeAll);
+});

@@ -6,8 +6,7 @@
  *   npx tsx scripts/local-db.ts --memory   → メモリのみ（終了で消える）
  *
  * .env.local.example を .env にコピーすると、この DB に接続する設定になる。
- * 注意: PGlite は 1 ユーザー DB なので、rag_bot ロールでのログインはできない。
- *       代わりに .env の DB_BOT_SET_ROLE=rag_bot で、検索トランザクション内で SET ROLE する。
+ * PGlite は 1 ユーザー DB なので rag_bot でのログインはできないが、withSlackUser が毎回 set local role rag_bot を実行するので RLS は同じように効く。
  */
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite-pgvector";

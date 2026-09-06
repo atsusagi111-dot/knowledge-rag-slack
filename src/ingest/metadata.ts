@@ -1,11 +1,13 @@
 /**
  * 文書のメタデータ（部署・客先・作成年・文書種別・タイトル）を推定する。
- * 優先順位:
+ * 部署の優先順位:
  *   1. 本文冒頭の「部署: 戦略 / 客先: 地方銀行A / 作成: 2024年 / 機密度: 社外秘」行
  *   2. フォルダ名（departmentHint）
- *   3. ファイル名に含まれる部署キーワード（strategy / hr など）
+ *   3. ファイル名に含まれる部署キーワード（-strategy- / _hr_ など）
  */
-import { DEPARTMENT_IDS, DEPARTMENT_NAME_JA, type DepartmentId } from "../config.js";
+import { DEPARTMENT_IDS, resolveDepartment, type DepartmentId } from "../config.js";
+
+export { resolveDepartment };
 
 export type DocType = "proposal" | "report" | "other";
 
@@ -19,70 +21,26 @@ export interface DocumentMetadata {
   docType: DocType;
 }
 
-const JA_TO_ID: Record<string, DepartmentId> = Object.fromEntries(
-  DEPARTMENT_IDS.map((id) => [DEPARTMENT_NAME_JA[id], id]),
-) as Record<string, DepartmentId>;
+const HEADER_LINE = /^.*部署\s*[:：].*$/m;
 
-// 英語 ID・日本語名・よくある別名 → 部署 ID
-const ALIASES: Record<string, DepartmentId> = {
-  ...JA_TO_ID,
-  ...Object.fromEntries(DEPARTMENT_IDS.map((id) => [id, id])),
-  戦略部: "strategy",
-  業務部: "operations",
-  ops: "operations",
-  it部: "it",
-  情報システム: "it",
-  人事部: "hr",
-  営業部: "sales",
-  管理部: "admin",
-  総務: "admin",
-};
-
-export function resolveDepartment(raw: string | undefined | null): DepartmentId | null {
-  if (!raw) return null;
-  const key = raw.trim().toLowerCase();
-  if (ALIASES[key]) return ALIASES[key];
-  // 「人事 / 客先」のように余分な語が付いている場合、先頭の語で再判定
-  const head = key.split(/[\s/／:：]/)[0];
-  return ALIASES[head] ?? null;
-}
-
-export function extractMetadata(
-  fullText: string,
-  fileName: string,
-  departmentHint?: string,
-): DocumentMetadata {
+export function extractMetadata(fullText: string, fileName: string, departmentHint?: string): DocumentMetadata {
   const head = fullText.slice(0, 1500);
+  const headerLine = head.match(HEADER_LINE)?.[0] ?? "";
+  const deptMatch = headerLine.match(/部署\s*[:：]\s*([^/／\n*]+)/);
+  const clientMatch = headerLine.match(/客先\s*[:：]\s*([^/／\n*]+)/);
+  const yearMatch = headerLine.match(/作成\s*[:：]\s*(\d{4})\s*年?/) ?? head.match(/(20\d{2})\s*年/);
+  const lower = fileName.toLowerCase();
 
-  // --- 冒頭行の「部署: xx / 客先: yy / 作成: 2024年」 ---
-  const deptMatch = head.match(/部署\s*[:：]\s*([^/／\n*]+)/);
-  const clientMatch = head.match(/客先\s*[:：]\s*([^/／\n*]+)/);
-  const yearMatch = head.match(/作成\s*[:：]\s*(\d{4})\s*年?/) ?? head.match(/(20\d{2})\s*年/);
-
-  let departmentId: DepartmentId | null = null;
-  let departmentSource: DocumentMetadata["departmentSource"] = "none";
-
-  const fromHeader = resolveDepartment(deptMatch?.[1]);
-  if (fromHeader) {
-    departmentId = fromHeader;
-    departmentSource = "header";
-  } else {
-    const fromFolder = resolveDepartment(departmentHint);
-    if (fromFolder) {
-      departmentId = fromFolder;
-      departmentSource = "folder";
-    } else {
-      const lower = fileName.toLowerCase();
-      const hit = DEPARTMENT_IDS.find((id) => lower.includes(`-${id}-`) || lower.includes(`_${id}_`));
-      if (hit) {
-        departmentId = hit;
-        departmentSource = "filename";
-      }
-    }
-  }
+  const candidates: [DocumentMetadata["departmentSource"], DepartmentId | null][] = [
+    ["header", resolveDepartment(deptMatch?.[1])],
+    ["folder", resolveDepartment(departmentHint)],
+    ["filename", DEPARTMENT_IDS.find((id) => lower.includes(`-${id}-`) || lower.includes(`_${id}_`)) ?? null],
+  ];
+  const [departmentSource, departmentId] = candidates.find(([, id]) => id) ?? ["none", null];
 
   return {
-    title: extractTitle(head, fileName),
+    // メタデータ行はタイトル候補から除く（行の並び順に依存しない）
+    title: extractTitle(head.replace(headerLine, ""), fileName),
     departmentId,
     departmentSource,
     clientName: clientMatch?.[1]?.trim() ?? null,
@@ -98,7 +56,7 @@ function extractTitle(head: string, fileName: string): string {
   const firstLine = head
     .split("\n")
     .map((l) => l.trim())
-    .find((l) => l.length >= 4 && !l.startsWith("部署"));
+    .find((l) => l.length >= 4);
   return (firstLine ?? fileName).slice(0, 120);
 }
 

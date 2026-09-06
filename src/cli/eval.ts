@@ -2,24 +2,25 @@
  * 評価スクリプト:  npm run eval [-- --questions eval/questions.csv] [--no-llm]
  *
  * eval/questions.csv の各行を「指定ユーザーとして」実行し、
- *   - 該当あり問  : Recall@5（正解文書が上位 5 チャンクの文書集合に含まれる割合）
+ *   - 該当あり問  : Recall@5（正解文書が上位チャンクの文書集合に含まれる割合）
  *   - 該当なし問  : 「該当なし」を返せたか
  *   - RLS 問      : 他部署ユーザーで検索して 0 件 + 該当なし になったか
  * を集計し、eval/results/YYYY-MM-DD_HHmm.md に Markdown 表で保存する。
  *
  * CSV 列: 番号,質問,正解文書,正解の根拠,種別,テストユーザー
- *   テストユーザー = eval/users.json のキー（例 strategy_only / hr_only / all_depts）
+ *   テストユーザー = users.json のキー（all_depts / hr_only）。実 ID は git 管理外の data/master/eval_users.json を優先
  *   正解文書 = ファイル名の一部（"case7-doc1"）。複数は " / " 区切り
  */
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
-import { closeAll } from "../db/client.js";
+import { ingestSql } from "../db/client.js";
 import { parseCsv } from "../lib/csv.js";
-import { searchChunks } from "../search/search.js";
+import { flag, runCli, value } from "../lib/cli.js";
+import { embeddingClient } from "../providers.js";
+import { makeSearch, type SearchResult } from "../search/search.js";
 import { applyThreshold } from "../search/threshold.js";
 import { answerQuestion } from "../search/answer.js";
-import { ingestSql } from "../db/client.js";
 
 interface Question {
   no: string;
@@ -27,18 +28,13 @@ interface Question {
   expectedDocs: string[]; // source_path に含まれる部分文字列
   kind: "hit" | "no_hit" | "rls";
   testUser: string;
-  rationale: string;
 }
 
 interface Row {
-  no: string;
-  kind: string;
-  user: string;
-  question: string;
+  q: Question;
   topScore: number | null;
   recall: number | null;
   passed: boolean;
-  status: string;
   topDocs: string[];
   note: string;
 }
@@ -47,51 +43,36 @@ function parseQuestions(csv: string): Question[] {
   return parseCsv(csv).map((r) => {
     const kindRaw = r["種別"] ?? "";
     const kind: Question["kind"] = /RLS/i.test(kindRaw) ? "rls" : /該当なし/.test(kindRaw) ? "no_hit" : "hit";
-    const expected = (r["正解文書"] ?? "")
-      .split("/")
-      .map((s) => s.trim())
-      .filter((s) => s && !s.startsWith("（"));
-    return {
-      no: r["番号"],
-      question: r["質問"],
-      expectedDocs: kind === "hit" ? expected : [],
-      kind,
-      testUser: r["テストユーザー"] || "all_depts",
-      rationale: r["正解の根拠"] ?? "",
-    };
+    const expected = (r["正解文書"] ?? "").split("/").map((s) => s.trim()).filter((s) => s && !s.startsWith("（"));
+    return { no: r["番号"], question: r["質問"], expectedDocs: kind === "hit" ? expected : [], kind, testUser: r["テストユーザー"] || "all_depts" };
   });
 }
 
-async function main() {
-  const args = process.argv.slice(2);
-  const qIdx = args.indexOf("--questions");
-  const questionsPath = qIdx >= 0 ? args[qIdx + 1] : "eval/questions.csv";
-  const useLlm = !args.includes("--no-llm");
+const fmt = (n: number | null | undefined, digits = 3) => (n == null || !isFinite(n) ? "-" : n.toFixed(digits));
 
-  // テストユーザーの実 ID は git 管理外の data/master/eval_users.json を優先。無ければ eval/users.json（プレースホルダ）
+runCli(async () => {
+  const questionsPath = value("--questions") ?? "eval/questions.csv";
+  const useLlm = !flag("--no-llm");
   const usersPath = (await stat("data/master/eval_users.json").catch(() => null)) ? "data/master/eval_users.json" : "eval/users.json";
-  const users = JSON.parse(await readFile(usersPath, "utf8")) as Record<string, string>;
   console.log(`テストユーザー: ${usersPath}`);
+  const users = JSON.parse(await readFile(usersPath, "utf8")) as Record<string, string>;
   const questions = parseQuestions(await readFile(questionsPath, "utf8"));
-  // document_id → source_path（正解判定用）
   const docs = await ingestSql()<{ id: string; source_path: string }[]>`select id, source_path from documents`;
   const pathById = new Map(docs.map((d) => [d.id, d.source_path]));
+  const search = makeSearch(embeddingClient());
 
   const rows: Row[] = [];
   for (const q of questions) {
     const slackUserId = users[q.testUser];
     if (!slackUserId) {
-      rows.push({ no: q.no, kind: q.kind, user: q.testUser, question: q.question, topScore: null, recall: null, passed: false, status: "-", topDocs: [], note: `eval/users.json に ${q.testUser} がありません` });
+      rows.push({ q, topScore: null, recall: null, passed: false, topDocs: [], note: `${usersPath} に ${q.testUser} がありません` });
       continue;
     }
-    const search = await searchChunks(slackUserId, q.question);
-    const decision = applyThreshold(search.hits);
-    const topDocs = [...new Set(search.hits.map((h) => pathById.get(h.documentId) ?? h.documentId))];
-    const topScore = decision.topScore;
-
+    const result: SearchResult = await search(slackUserId, q.question);
+    const decision = applyThreshold(result.hits);
+    const topDocs = [...new Set(result.hits.map((h) => pathById.get(h.documentId) ?? h.documentId))];
     let recall: number | null = null;
     let passed = false;
-    let status = decision.passed ? "hit" : "no_hit";
     let note = "";
 
     if (q.kind === "hit") {
@@ -101,8 +82,8 @@ async function main() {
       if (recall !== null && recall < 1) note = `未検出: ${q.expectedDocs.filter((e) => !found.includes(e)).join(", ")}`;
     } else if (q.kind === "no_hit") {
       if (useLlm && decision.passed) {
-        const a = await answerQuestion(slackUserId, q.question, { skipLog: true });
-        status = a.status;
+        // 閾値を通過した場合は LLM 側の判定を見る（検索結果は使い回す）
+        const a = await answerQuestion(slackUserId, q.question, { skipLog: true, deps: { search: async () => result } });
         passed = a.status === "no_hit";
         note = passed ? "閾値は通過したが LLM が該当なしと判定" : `LLM が回答してしまった: ${a.text.slice(0, 60)}…`;
       } else {
@@ -110,51 +91,41 @@ async function main() {
       }
     } else {
       // rls: 他部署ユーザーで検索。結果に他部署文書が 1 件も無く、該当なしになること
-      const foreign = search.hits.filter((h) => !search.departmentIds.includes(h.departmentId));
+      const foreign = result.hits.filter((h) => !result.departmentIds.includes(h.departmentId));
       passed = foreign.length === 0 && !decision.passed;
-      note = foreign.length > 0 ? `権限漏れ! 他部署チャンク ${foreign.length} 件` : search.unregistered ? "ユーザー未登録" : `所属 ${search.departmentIds.join(",")} で ${search.hits.length} 件`;
+      note = foreign.length > 0 ? `権限漏れ! 他部署チャンク ${foreign.length} 件` : result.unregistered ? "ユーザー未登録" : `所属 ${result.departmentIds.join(",")} で ${result.hits.length} 件`;
     }
 
-    rows.push({ no: q.no, kind: q.kind, user: q.testUser, question: q.question, topScore, recall, passed, status, topDocs, note });
-    console.log(`${passed ? "✅" : "❌"} Q${q.no} [${q.kind}] top=${topScore?.toFixed(3) ?? "-"} ${note}`);
+    rows.push({ q, topScore: decision.topScore, recall, passed, topDocs, note });
+    console.log(`${passed ? "✅" : "❌"} Q${q.no} [${q.kind}] top=${fmt(decision.topScore)} ${note}`);
   }
 
   // 集計
-  const hitRows = rows.filter((r) => r.kind === "hit" && r.recall !== null);
+  const hitRows = rows.filter((r) => r.q.kind === "hit" && r.recall !== null);
+  const noHitRows = rows.filter((r) => r.q.kind === "no_hit");
+  const rlsRows = rows.filter((r) => r.q.kind === "rls");
   const recallAt5 = hitRows.length ? hitRows.reduce((s, r) => s + (r.recall ?? 0), 0) / hitRows.length : 0;
-  const noHitRows = rows.filter((r) => r.kind === "no_hit");
-  const rlsRows = rows.filter((r) => r.kind === "rls");
-  const minHitScore = Math.min(...hitRows.map((r) => r.topScore ?? 1));
-  const maxNoHitScore = Math.max(...noHitRows.map((r) => r.topScore ?? 0));
+  const minHit = Math.min(...hitRows.map((r) => r.topScore ?? 1));
+  const maxNoHit = Math.max(...noHitRows.map((r) => r.topScore ?? 0));
+  const count = (rs: Row[]) => `${rs.filter((r) => r.passed).length}/${rs.length}`;
 
   const md = [
     `# 評価結果 ${new Date().toLocaleString("ja-JP")}`,
     ``,
     `- Embedding: ${config.openai.embeddingModel} / 生成: ${config.openai.chatModel} / topK: ${config.search.topK} / 閾値: ${config.search.similarityThreshold}`,
     `- **Recall@5: ${recallAt5.toFixed(2)}**（該当あり ${hitRows.length} 問）`,
-    `- **該当なし正答: ${noHitRows.filter((r) => r.passed).length}/${noHitRows.length}**`,
-    `- **RLS 検証: ${rlsRows.filter((r) => r.passed).length}/${rlsRows.length}**`,
-    `- 閾値の目安: 該当あり問の最低 top スコア = ${isFinite(minHitScore) ? minHitScore.toFixed(3) : "-"} / 該当なし問の最高 top スコア = ${isFinite(maxNoHitScore) ? maxNoHitScore.toFixed(3) : "-"} → 中間 ${isFinite(minHitScore) && isFinite(maxNoHitScore) ? ((minHitScore + maxNoHitScore) / 2).toFixed(3) : "-"}`,
+    `- **該当なし正答: ${count(noHitRows)}**`,
+    `- **RLS 検証: ${count(rlsRows)}**`,
+    `- 閾値の目安: 該当あり問の最低 top スコア = ${fmt(minHit)} / 該当なし問の最高 top スコア = ${fmt(maxNoHit)} → 中間 ${fmt((minHit + maxNoHit) / 2)}`,
     ``,
     `| No | 種別 | ユーザー | 判定 | top score | Recall | 上位文書 | 備考 |`,
     `|---|---|---|---|---|---|---|---|`,
-    ...rows.map(
-      (r) =>
-        `| ${r.no} | ${r.kind} | ${r.user} | ${r.passed ? "✅" : "❌"} | ${r.topScore?.toFixed(3) ?? "-"} | ${r.recall?.toFixed(2) ?? "-"} | ${r.topDocs.map((d) => path.basename(d)).join("<br>")} | ${r.note} |`,
-    ),
+    ...rows.map((r) => `| ${r.q.no} | ${r.q.kind} | ${r.q.testUser} | ${r.passed ? "✅" : "❌"} | ${fmt(r.topScore)} | ${fmt(r.recall, 2)} | ${r.topDocs.map((d) => path.basename(d)).join("<br>")} | ${r.note} |`),
   ].join("\n");
 
   await mkdir("eval/results", { recursive: true });
-  const stamp = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "");
-  const out = `eval/results/${stamp}.md`;
+  const out = `eval/results/${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "")}.md`;
   await writeFile(out, md, "utf8");
-  console.log(`\nRecall@5=${recallAt5.toFixed(2)}  該当なし ${noHitRows.filter((r) => r.passed).length}/${noHitRows.length}  RLS ${rlsRows.filter((r) => r.passed).length}/${rlsRows.length}`);
+  console.log(`\nRecall@5=${recallAt5.toFixed(2)}  該当なし ${count(noHitRows)}  RLS ${count(rlsRows)}`);
   console.log(`保存: ${out}`);
-}
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exitCode = 1;
-  })
-  .finally(closeAll);
+});

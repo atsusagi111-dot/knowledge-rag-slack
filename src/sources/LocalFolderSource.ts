@@ -4,7 +4,7 @@
  * 部署フォルダ名（英語 ID または日本語名）を departmentHint として渡す。
  * 直下に置かれたファイルも取り込む（その場合は本文の冒頭行だけで部署を決める）。
  */
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileTypeFromName, type DocumentSource, type SourceFile } from "./DocumentSource.js";
 
@@ -33,16 +33,8 @@ export class LocalFolderSource implements DocumentSource {
         continue;
       }
       const fileType = fileTypeFromName(entry.name);
-      if (!fileType) continue;
-      if (entry.name.startsWith("~$")) continue; // Word の一時ファイル
-      const s = await stat(full);
-      yield {
-        path: path.relative(this.root, full).split(path.sep).join("/"),
-        name: entry.name,
-        fileType,
-        departmentHint: hint,
-        modifiedAt: s.mtime,
-      };
+      if (!fileType || entry.name.startsWith("~$")) continue; // 対象外 / Word の一時ファイル
+      yield { path: path.relative(this.root, full).split(path.sep).join("/"), name: entry.name, fileType, departmentHint: hint };
     }
   }
 

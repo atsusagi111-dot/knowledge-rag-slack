@@ -13,8 +13,7 @@ export interface SourceFile {
   fileType: FileType;
   /** 部署のヒント（フォルダ名など）。文書本文の冒頭行が優先される */
   departmentHint?: string;
-  /** 元ファイルの更新日時（分かる場合） */
-  modifiedAt?: Date;
+
 }
 
 export interface DocumentSource {

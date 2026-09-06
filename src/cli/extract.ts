@@ -1,28 +1,13 @@
 /** 抽出テスト:  npm run extract -- data/docs/strategy/xxx.pdf */
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { extractText } from "../ingest/extract.js";
-import { extractMetadata } from "../ingest/metadata.js";
-import { fileTypeFromName } from "../sources/DocumentSource.js";
+import { analyzeLocalFile } from "../ingest/local.js";
+import { positionals, runCli } from "../lib/cli.js";
 
-async function main() {
-  const file = process.argv[2];
+runCli(async () => {
+  const file = positionals()[0];
   if (!file) throw new Error("使い方: npm run extract -- <pdf または docx のパス>");
-  const type = fileTypeFromName(file);
-  if (!type) throw new Error("pdf か docx を指定してください");
-  const buf = await readFile(file);
-  const ex = await extractText(buf, type);
-  const hint = path.basename(path.dirname(path.resolve(file)));
-  const meta = extractMetadata(ex.fullText, path.basename(file), hint);
+  const { extracted, meta } = await analyzeLocalFile(file);
   console.log("=== メタデータ ===");
   console.log(JSON.stringify(meta, null, 2));
-  console.log(`=== 本文（${ex.pages.length} ページ, ${ex.fullText.length} 文字）===`);
-  for (const p of ex.pages) {
-    console.log(`\n----- page ${p.page} -----\n${p.text}`);
-  }
-}
-
-main().catch((e) => {
-  console.error(e.message);
-  process.exitCode = 1;
+  console.log(`=== 本文（${extracted.pages.length} ページ, ${extracted.fullText.length} 文字）===`);
+  for (const p of extracted.pages) console.log(`\n----- page ${p.page} -----\n${p.text}`);
 });

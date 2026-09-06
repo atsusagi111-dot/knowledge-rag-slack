@@ -13,35 +13,38 @@
  */
 import { rename, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { WebClient } from "@slack/web-api";
 import { config } from "../config.js";
-import { ingestSql, closeAll } from "../db/client.js";
+import { ingestSql } from "../db/client.js";
+import { findLocalDocument } from "../db/documents.js";
+import { slackWebClient } from "../slack/client.js";
+import { flag, runCli, value } from "../lib/cli.js";
 
-function arg(name: string): string | undefined {
-  const i = process.argv.indexOf(name);
-  return i >= 0 ? process.argv[i + 1] : undefined;
+interface LogRow {
+  id: number;
+  slack_user_id: string;
+  question: string;
+  created_at: Date;
+  answer_channel_id: string | null;
+  answer_ts: string | null;
+  top_chunk_ids: string[];
+  top_scores: number[];
 }
 
-async function main() {
-  const sourcePath = arg("--path");
-  const reason = arg("--reason") ?? "誤アップロード";
-  const deleteSlack = process.argv.includes("--delete-slack");
-  const dryRun = process.argv.includes("--dry-run");
+runCli(async () => {
+  const sourcePath = value("--path");
+  const reason = value("--reason") ?? "誤アップロード";
+  const deleteSlack = flag("--delete-slack");
+  const dryRun = flag("--dry-run");
   if (!sourcePath) throw new Error('使い方: npm run redact -- --path <部署/ファイル名> --reason "理由" [--delete-slack] [--dry-run]');
 
   const sql = ingestSql();
-  const [doc] = await sql<{ id: string; title: string; department_id: string }[]>`
-    select id, title, department_id from documents where source_type = 'local' and source_path = ${sourcePath}`;
-  if (!doc) throw new Error(`文書が見つかりません: ${sourcePath}（npm run db:stats で source_path を確認）`);
+  const doc = await findLocalDocument(sql, sourcePath);
+  const chunkIds = new Set((await sql<{ id: string }[]>`select id from chunks where document_id = ${doc.id}`).map((c) => c.id));
+  const logs = await sql<LogRow[]>`
+    select id, slack_user_id, question, created_at, answer_channel_id, answer_ts, top_chunk_ids, top_scores
+    from search_logs where top_chunk_ids && ${[...chunkIds]}::uuid[] and redacted_at is null order by id`;
 
-  const chunks = await sql<{ id: string }[]>`select id from chunks where document_id = ${doc.id}`;
-  const chunkIds = chunks.map((c) => c.id);
-  const logs = await sql<
-    { id: number; slack_user_id: string; question: string; created_at: Date; answer_channel_id: string | null; answer_ts: string | null; top_chunk_ids: string[]; top_scores: number[] }[]
-  >`select id, slack_user_id, question, created_at, answer_channel_id, answer_ts, top_chunk_ids, top_scores
-     from search_logs where top_chunk_ids && ${chunkIds}::uuid[] and redacted_at is null order by id`;
-
-  console.log(`対象文書: ${doc.title}（${doc.department_id}） チャンク ${chunkIds.length} 件`);
+  console.log(`対象文書: ${doc.title}（${doc.department_id}） チャンク ${chunkIds.size} 件`);
   console.log(`この文書を根拠にした質問: ${logs.length} 件`);
   for (const l of logs) {
     console.log(`  #${l.id} ${l.created_at.toISOString().slice(0, 16)} ${l.slack_user_id} 「${l.question.slice(0, 40)}」 Slack投稿: ${l.answer_ts ? "あり" : "なし"}`);
@@ -51,17 +54,12 @@ async function main() {
     return;
   }
 
-  // 2. 監査ログの redact（該当チャンクの参照を除去し、印を付ける）
+  // 2〜3. 監査ログの redact と Slack 投稿の削除
   let slackDeleted = 0;
-  const slack = deleteSlack ? new WebClient(config.slack.botToken) : null;
+  const slack = deleteSlack ? slackWebClient() : null;
   for (const l of logs) {
-    const keepIdx = l.top_chunk_ids.map((c, i) => (chunkIds.includes(c) ? -1 : i)).filter((i) => i >= 0);
-    const newIds = keepIdx.map((i) => l.top_chunk_ids[i]);
-    const newScores = keepIdx.map((i) => l.top_scores[i]);
-    const removed = l.top_chunk_ids.length - newIds.length;
-    let note = `${reason} / 文書「${doc.title}」のチャンク ${removed} 件を根拠から除去`;
-
-    // 3. Slack の回答メッセージを削除
+    const keep = l.top_chunk_ids.map((id, i) => i).filter((i) => !chunkIds.has(l.top_chunk_ids[i]));
+    let note = `${reason} / 文書「${doc.title}」のチャンク ${l.top_chunk_ids.length - keep.length} 件を根拠から除去`;
     if (slack && l.answer_channel_id && l.answer_ts) {
       try {
         await slack.chat.delete({ channel: l.answer_channel_id, ts: l.answer_ts });
@@ -72,7 +70,7 @@ async function main() {
       }
     }
     await sql`update search_logs
-              set top_chunk_ids = ${newIds}::uuid[], top_scores = ${newScores}::real[],
+              set top_chunk_ids = ${keep.map((i) => l.top_chunk_ids[i])}::uuid[], top_scores = ${keep.map((i) => l.top_scores[i])}::real[],
                   redacted_at = now(), redaction_note = ${note}
               where id = ${l.id}`;
   }
@@ -84,10 +82,9 @@ async function main() {
   const src = path.join(config.docsDir, ...sourcePath.split("/"));
   let quarantined: string | null = null;
   if (await stat(src).catch(() => null)) {
-    const dest = path.join("data", "quarantine", `${new Date().toISOString().slice(0, 10)}_${path.basename(sourcePath)}`);
-    await mkdir(path.dirname(dest), { recursive: true });
-    await rename(src, dest);
-    quarantined = dest;
+    quarantined = path.join("data", "quarantine", `${new Date().toISOString().slice(0, 10)}_${path.basename(sourcePath)}`);
+    await mkdir(path.dirname(quarantined), { recursive: true });
+    await rename(src, quarantined);
   }
 
   // 6. 取り消しの記録
@@ -95,11 +92,4 @@ async function main() {
             values (${sourcePath}, ${doc.title}, ${doc.department_id}, ${reason}, ${logs.length}, ${slackDeleted}, ${quarantined})`;
 
   console.log(`\n完了: 文書削除 / 監査ログ ${logs.length} 件を redact / Slack 投稿削除 ${slackDeleted} 件 / 隔離先 ${quarantined ?? "（元ファイルなし）"}`);
-}
-
-main()
-  .catch((e) => {
-    console.error(e.message);
-    process.exitCode = 1;
-  })
-  .finally(closeAll);
+});

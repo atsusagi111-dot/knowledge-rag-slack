@@ -22,7 +22,7 @@
     "eval": "tsx src/cli/eval.ts",
     "bot": "tsx src/slack/app.ts",
     "test": "vitest run",
-    "test:rls": "vitest run tests/rls.test.ts",
+    "test:rls": "vitest run --config vitest.db.config.ts",
     "redact": "tsx src/cli/redact.ts",
     "doc:classify": "tsx src/cli/classify.ts",
     "report": "tsx src/cli/report.ts",
