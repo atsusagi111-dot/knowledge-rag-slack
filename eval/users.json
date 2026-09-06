@@ -1,0 +1,6 @@
+{
+  "_comment": "評価に使うテストユーザー。値は Slack のユーザー ID（U から始まる）。data/master/user_departments.csv の内容と一致させる。",
+  "strategy_only": "U_STRATEGY_ONLY",
+  "hr_only": "U_HR_ONLY",
+  "all_depts": "U_ALL_DEPTS"
+}

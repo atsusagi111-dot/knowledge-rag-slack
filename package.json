@@ -1,0 +1,42 @@
+{
+  "name": "knowledge-rag-slack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "社内ナレッジ検索 RAG（Slack ボット）MVP - 無料枠版",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "db:ping": "tsx src/cli/db-ping.ts",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:stats": "tsx src/cli/db-stats.ts",
+    "db:seed-users": "tsx src/cli/seed-users.ts",
+    "extract": "tsx src/cli/extract.ts",
+    "chunk": "tsx src/cli/chunk.ts",
+    "ingest": "tsx src/cli/ingest.ts",
+    "search": "tsx src/cli/search.ts",
+    "answer": "tsx src/cli/answer.ts",
+    "eval": "tsx src/cli/eval.ts",
+    "bot": "tsx src/slack/app.ts",
+    "test": "vitest run",
+    "test:rls": "vitest run tests/rls.test.ts"
+  },
+  "dependencies": {
+    "@slack/bolt": "^5.1.0",
+    "dotenv": "^17.4.2",
+    "js-tiktoken": "^1.0.21",
+    "mammoth": "^1.12.2",
+    "openai": "^7.10.0",
+    "pdf-parse": "^2.4.5",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "docx": "^9.7.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}
