@@ -11,7 +11,7 @@
  *   テストユーザー = eval/users.json のキー（例 strategy_only / hr_only / all_depts）
  *   正解文書 = ファイル名の一部（"case7-doc1"）。複数は " / " 区切り
  */
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.js";
 import { closeAll } from "../db/client.js";
@@ -68,7 +68,10 @@ async function main() {
   const questionsPath = qIdx >= 0 ? args[qIdx + 1] : "eval/questions.csv";
   const useLlm = !args.includes("--no-llm");
 
-  const users = JSON.parse(await readFile("eval/users.json", "utf8")) as Record<string, string>;
+  // テストユーザーの実 ID は git 管理外の data/master/eval_users.json を優先。無ければ eval/users.json（プレースホルダ）
+  const usersPath = (await stat("data/master/eval_users.json").catch(() => null)) ? "data/master/eval_users.json" : "eval/users.json";
+  const users = JSON.parse(await readFile(usersPath, "utf8")) as Record<string, string>;
+  console.log(`テストユーザー: ${usersPath}`);
   const questions = parseQuestions(await readFile(questionsPath, "utf8"));
   // document_id → source_path（正解判定用）
   const docs = await ingestSql()<{ id: string; source_path: string }[]>`select id, source_path from documents`;
