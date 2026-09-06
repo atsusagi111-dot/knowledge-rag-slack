@@ -60,7 +60,7 @@ export const config = {
     embeddingModel: optional("EMBEDDING_MODEL", "text-embedding-3-small"),
     /** text-embedding-3-small の次元数。DB の vector(1536) と一致させる */
     embeddingDimensions: 1536,
-    chatModel: optional("CHAT_MODEL", "gpt-5-nano"),
+    chatModel: optional("CHAT_MODEL", "gpt-5-mini"),
     /** gpt-5 系の推論量。minimal は最速だが稀に該当なし誤判定、low は 2〜5 秒で安定（既定）。空文字で API 既定 */
     reasoningEffort: optional("CHAT_REASONING_EFFORT", "low"),
   },

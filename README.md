@@ -136,7 +136,7 @@ GitHub のプライベートリポジトリに push し、Settings → Secrets �
 ## 設定値（.env）
 | 変数 | 既定 | 意味 |
 |---|---|---|
-| `CHAT_MODEL` | gpt-5-nano | 要約に使うモデル。品質不足なら gpt-5-mini |
+| `CHAT_MODEL` | gpt-5-mini | 要約に使うモデル。nano は「該当なし」判定が不安定だったため mini を既定に（1 問 0.3 円程度） |
 | `EMBEDDING_MODEL` | text-embedding-3-small | 次元数 1536（DB と一致させる） |
 | `CHAT_REASONING_EFFORT` | low | gpt-5 系の推論量。minimal は最速だが不安定、medium 以上は 10 秒超 |
 | `SEARCH_TOP_K` | 8 | 回答に使う上位チャンク数 |
