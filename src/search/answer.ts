@@ -6,13 +6,16 @@
  *  - 渡したチャンク以外を根拠にしない・根拠が無ければ NO_ANSWER と書く、とプロンプトで指示
  *  - 回答に出典番号 [n] が 1 つも無ければ該当なし扱い
  *
- * 依存（検索関数・LLM）は deps で差し替えられる。既定は providers.ts が組み立てる。
+ * 監査ログは「ログの無い回答は存在しない」を守る: ログ保存に失敗したら回答を返さずエラーにする。
+ * （検索と同一トランザクションにはしない。LLM 生成の 2〜10 秒間 DB 接続を占有しないため）
+ *
+ * 依存（検索関数・LLM・ログ保存）は deps で差し替えられる。既定は providers.ts が組み立てる。
  */
 import { config, departmentLabel } from "../config.js";
 import { chatFn, embeddingClient, type ChatFn } from "../providers.js";
 import { makeSearch, type SearchFn, type SearchHit } from "./search.js";
 import { applyThreshold } from "./threshold.js";
-import { writeSearchLog } from "../audit/log.js";
+import { writeSearchLog, type SearchLogInput } from "../audit/log.js";
 
 export type AnswerStatus = "answered" | "no_hit" | "unregistered" | "error";
 
@@ -44,6 +47,8 @@ export interface AnswerResult {
 export interface AnswerDeps {
   search: SearchFn;
   chat: ChatFn;
+  /** 監査ログを 1 行書いて id を返す */
+  log: (input: SearchLogInput) => Promise<number>;
 }
 
 export interface AnswerOptions {
@@ -56,10 +61,11 @@ export interface AnswerOptions {
 const NO_ANSWER_TOKEN = "NO_ANSWER";
 export const NO_HIT_MESSAGE = "該当する文書は見つかりませんでした。質問の言い回しを変えるか、別のキーワードでお試しください。";
 export const UNREGISTERED_MESSAGE = "あなたの Slack アカウントは部署マスタに登録されていません。管理者に登録を依頼してください。";
+export const LOG_FAILED_MESSAGE = "監査ログを記録できなかったため、回答を中止しました。時間をおいて再度お試しください。";
 
 let _defaultDeps: AnswerDeps | undefined;
 function defaultDeps(): AnswerDeps {
-  if (!_defaultDeps) _defaultDeps = { search: makeSearch(embeddingClient()), chat: chatFn() };
+  if (!_defaultDeps) _defaultDeps = { search: makeSearch(embeddingClient()), chat: chatFn(), log: writeSearchLog };
   return _defaultDeps;
 }
 
@@ -101,8 +107,10 @@ export async function answerQuestion(slackUserId: string, question: string, opts
   }
 
   const result: AnswerResult = { status, text, citations, hits, topScore, latencyMs: Date.now() - started, model };
-  if (!opts.skipLog) {
-    result.logId = await writeSearchLog({
+  if (opts.skipLog) return result;
+
+  try {
+    result.logId = await deps.log({
       slackUserId,
       channelId: opts.channelId ?? null,
       question,
@@ -112,12 +120,13 @@ export async function answerQuestion(slackUserId: string, question: string, opts
       status,
       model,
       latencyMs: result.latencyMs,
-    }).catch((e) => {
-      console.error("監査ログ書き込み失敗:", e);
-      return undefined;
     });
+    return result;
+  } catch (e) {
+    // ログが残らない回答は出さない（監査要件）。回答本文・出典は捨ててエラーだけ返す
+    console.error("監査ログ書き込み失敗（回答を中止）:", e);
+    return { status: "error", text: LOG_FAILED_MESSAGE, citations: [], hits: [], topScore, latencyMs: Date.now() - started, model };
   }
-  return result;
 }
 
 export function buildCitations(hits: SearchHit[]): Citation[] {

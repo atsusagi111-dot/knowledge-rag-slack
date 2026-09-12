@@ -188,6 +188,7 @@ Settings → Secrets に `DATABASE_URL_INGEST` `DATABASE_URL_BOT` `RAG_BOT_PASSW
 - RLS ポリシーが「そのユーザーの所属部署の行」だけを返す。ベクトル検索の **並べ替え前** に除外されるので、他部署のデータはアプリまで届かない
 - `set_config` を忘れると 0 件（安全側）。`tests/rls.test.ts` が「人事ユーザーは IT 文書を 0 件」を毎回検証
 - 取り込み用の接続 URL（postgres ロール）はボットに渡さない。`.env` と `data/` は git 管理外
+- 監査ログ `search_logs` の保存に失敗したら回答を返さずエラーにする（「ログの無い回答は存在しない」）。検索と同一トランザクションにはしない: LLM 生成の 2〜10 秒間 DB 接続を占有しないため。`tests/answer.test.ts` で検証
 
 ## ディレクトリ
 ```

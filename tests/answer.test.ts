@@ -5,9 +5,10 @@
  *  - LLM が NO_ANSWER → no_hit
  *  - LLM が出典番号無しで答えた → no_hit（ハルシネーション対策 2 段目）
  *  - 正常 → answered + 出典
+ *  - 監査ログの保存失敗 → 回答を返さず error（ログの無い回答は存在しない）
  */
 import { describe, it, expect } from "vitest";
-import { answerQuestion, NO_HIT_MESSAGE, type AnswerDeps } from "../src/search/answer.js";
+import { answerQuestion, LOG_FAILED_MESSAGE, NO_HIT_MESSAGE, type AnswerDeps } from "../src/search/answer.js";
 import type { SearchResult } from "../src/search/search.js";
 import { makeHit } from "./fixtures.js";
 
@@ -20,6 +21,7 @@ function deps(result: SearchResult, reply: string | Error): AnswerDeps & { calls
       if (reply instanceof Error) throw reply;
       return reply;
     },
+    log: async () => 1,
     calls: () => calls,
   };
 }
@@ -70,5 +72,18 @@ describe("answerQuestion", () => {
     const r = await answerQuestion("U1", "q", opts(d));
     expect(r.status).toBe("error");
     expect(r.text).toContain("rate limit");
+  });
+
+  it("監査ログの保存に失敗したら回答を返さず error（ログの無い回答は存在しない）", async () => {
+    const d = deps(found(0.62), "年間約 1.2 億円の削減です [1]。");
+    const logOk = await answerQuestion("U1", "q", { deps: { ...d, log: async () => 42 } });
+    expect(logOk.status).toBe("answered");
+    expect(logOk.logId).toBe(42);
+
+    const r = await answerQuestion("U1", "q", { deps: { ...d, log: async () => { throw new Error("db down"); } } });
+    expect(r.status).toBe("error");
+    expect(r.text).toBe(LOG_FAILED_MESSAGE);
+    expect(r.citations).toEqual([]);
+    expect(r.logId).toBeUndefined();
   });
 });

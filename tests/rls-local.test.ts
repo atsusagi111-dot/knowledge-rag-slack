@@ -43,7 +43,7 @@ beforeAll(async () => {
     insert into user_departments (slack_user_id, department_id) values
       ('UHR', 'hr'), ('UIT', 'it'), ('UBOTH', 'hr'), ('UBOTH', 'it');
   `);
-});
+}, 60_000); // PGlite（WASM）の初回起動は環境によって 10 秒を超える
 
 afterAll(async () => {
   await db.close();
